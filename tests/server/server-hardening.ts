@@ -150,7 +150,7 @@ s.section("Test 5: blob uploads reject oversized Content-Length before R2 writes
 		"vault",
 		new Request(`https://example.test/vault/vault/blobs/${hash}`, {
 			method: "PUT",
-			headers: { "Content-Length": String(11 * 1024 * 1024) },
+			headers: { "Content-Length": String(MAX_BLOB_UPLOAD_BYTES + 1024 * 1024) },
 			body,
 		}),
 		[hash],

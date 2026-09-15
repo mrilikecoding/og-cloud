@@ -43,7 +43,7 @@ s.section("Test 4: server capability can lower the effective attachment cap");
 		"5 MB server capability lowers effective attachment cap to 5120 KB",
 	);
 	s.check(
-		attachmentSizeCapKB(50 * 1024 * 1024) === MAX_ATTACHMENT_SIZE_KB,
+		attachmentSizeCapKB(2 * MAX_ATTACHMENT_SIZE_KB * 1024) === MAX_ATTACHMENT_SIZE_KB,
 		"larger server capability does not raise the client above the built-in ceiling",
 	);
 	s.check(
