@@ -2,7 +2,7 @@ import { randomId } from "../utils/randomId";
 
 /** Controls how external disk edits (git, other editors) are imported into CRDT. */
 export type ExternalEditPolicy = "always" | "closed-only" | "never";
-export const MAX_ATTACHMENT_SIZE_KB = 10 * 1024;
+export const MAX_ATTACHMENT_SIZE_KB = 100 * 1024;
 
 export function attachmentSizeCapKB(serverMaxBlobUploadBytes?: number | null): number {
 	if (
