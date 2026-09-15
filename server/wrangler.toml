@@ -1,4 +1,4 @@
-name = "yaos"
+name = "obsidian-sync"
 main = "src/index.ts"
 compatibility_date = "2026-03-02"
 
@@ -16,7 +16,7 @@ new_sqlite_classes = ["VaultSyncServer", "ServerConfig"]
 
 [[r2_buckets]]
 binding = "YAOS_BUCKET"
-bucket_name = "yaos"
+bucket_name = "obsidian-sync"
 
 [observability.logs]
 enabled = true
