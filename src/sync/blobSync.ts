@@ -21,6 +21,7 @@ import {
 	arrayBufferToHex,
 	Notice,
 } from "obsidian";
+import { pruneDepsFromApp, pruneEmptyParents } from "./pruneEmptyDirs";
 import type { VaultSync } from "./vaultSync";
 import { isBlobSyncable, type BlobRef } from "../types";
 import { ORIGIN_SEED } from "./origins";
@@ -1688,6 +1689,13 @@ export class BlobSyncManager {
 
 	private async deleteLocalReplica(file: TFile): Promise<"trash"> {
 		await this.app.fileManager.trashFile(file);
+		// A folder deleted elsewhere arrives here as its files, one by one;
+		// remove the shell once the last one is gone so devices agree.
+		try {
+			await pruneEmptyParents(pruneDepsFromApp(this.app), file.path);
+		} catch (err) {
+			console.warn(`[yaos:blob] prune after remote delete failed for "${file.path}":`, err);
+		}
 		return "trash";
 	}
 

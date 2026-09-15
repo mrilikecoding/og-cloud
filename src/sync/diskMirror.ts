@@ -1,4 +1,5 @@
 import { type App, arrayBufferToHex, MarkdownView, TFile, normalizePath } from "obsidian";
+import { pruneDepsFromApp, pruneEmptyParents } from "./pruneEmptyDirs";
 import * as Y from "yjs";
 import type { VaultSync } from "./vaultSync";
 import type { EditorBindingManager } from "./editorBinding";
@@ -934,6 +935,13 @@ export class DiskMirror {
 
 	private async deleteLocalReplica(file: TFile): Promise<"trash"> {
 		await this.app.fileManager.trashFile(file);
+		// A folder deleted elsewhere arrives here as its files, one by one;
+		// remove the shell once the last one is gone so devices agree.
+		try {
+			await pruneEmptyParents(pruneDepsFromApp(this.app), file.path);
+		} catch (err) {
+			console.warn(`[yaos] prune after remote delete failed for "${file.path}":`, err);
+		}
 		return "trash";
 	}
 
