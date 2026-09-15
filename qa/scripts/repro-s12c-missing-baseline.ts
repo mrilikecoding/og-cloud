@@ -117,7 +117,7 @@ async function main() {
 	// -----------------------------------------------------------------------
 
 	log("Phase 2: Disabling YAOS on B...");
-	await b.evalRaw(`app.plugins.disablePlugin("yaos")`);
+	await b.evalRaw(`app.plugins.disablePlugin("og-cloud")`);
 	await new Promise((r) => setTimeout(r, 2000));
 	const bDisabled = await b.evalRaw<boolean>(`!app.plugins.plugins.yaos`);
 	log(`B YAOS disabled: ${bDisabled}`);
@@ -168,7 +168,7 @@ async function main() {
 	// -----------------------------------------------------------------------
 
 	log("Phase 5: Re-enabling YAOS on B...");
-	await b.evalRaw(`app.plugins.enablePlugin("yaos")`);
+	await b.evalRaw(`app.plugins.enablePlugin("og-cloud")`);
 	await new Promise((r) => setTimeout(r, 5000));
 	const bReady = await b.evalRaw<boolean>(`!!app.plugins.plugins.yaos`);
 	log(`B YAOS re-enabled: ${bReady}`);

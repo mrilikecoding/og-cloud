@@ -1,4 +1,5 @@
 import { App, Notice, TFile, normalizePath } from "obsidian";
+import { pluginDir } from "../pluginId";
 import { BlobSyncManager } from "../sync/blobSync";
 import { DiskMirror } from "../sync/diskMirror";
 import {
@@ -216,7 +217,7 @@ export class SnapshotService {
 					if (!liveVaultSync) return;
 
 					const backupDir = normalizePath(
-						`${this.deps.app.vault.configDir}/plugins/yaos/restore-backups/${new Date().toISOString().replace(/[:.]/g, "-")}`,
+						`${pluginDir(this.deps.app)}/restore-backups/${new Date().toISOString().replace(/[:.]/g, "-")}`,
 					);
 					let backedUp = 0;
 					for (const path of markdownPaths) {

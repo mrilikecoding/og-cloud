@@ -1,4 +1,5 @@
 import { type App, normalizePath } from "obsidian";
+import { pluginDir } from "../../pluginId";
 import { randomId } from "../../utils/randomId";
 
 // Re-export product-safe types from observability layer.
@@ -89,7 +90,7 @@ export class PersistentTraceLogger implements TraceLoggerPort {
 			vaultId: options.vaultId,
 		};
 		this.rootDir = normalizePath(
-			`${this.app.vault.configDir}/plugins/yaos/logs`,
+			`${pluginDir(this.app)}/logs`,
 		);
 	}
 

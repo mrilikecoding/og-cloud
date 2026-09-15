@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
-export const PRODUCT_PLUGIN_ID = "yaos";
+export const PRODUCT_PLUGIN_ID = "og-cloud";
 export const HARNESS_PLUGIN_ID = "yaos-qa-harness";
 
 export const PREPARE_VAULT_USAGE = `Usage: bun run qa:prepare --fixture <id> --dest <new-path> [--preset <name>]

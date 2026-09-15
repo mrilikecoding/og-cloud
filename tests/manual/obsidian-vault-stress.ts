@@ -538,7 +538,7 @@ async function analyzeFile(filePath: string) {
 }
 
 async function readQuarantineState() {
-	const pluginDataPath = path.join(vaultRoot, ".obsidian", "plugins", "yaos", "data.json");
+	const pluginDataPath = path.join(vaultRoot, ".obsidian", "plugins", "og-cloud", "data.json");
 	try {
 		const raw = await readText(pluginDataPath);
 		const parsed: unknown = JSON.parse(raw);

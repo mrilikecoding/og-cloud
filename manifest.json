@@ -1,10 +1,10 @@
 {
-	"id": "yaos",
-	"name": "YAOS",
+	"id": "og-cloud",
+	"name": "OG Cloud Sync",
 	"version": "2.1.1",
 	"minAppVersion": "1.13.0",
-	"description": "A zero-terminal, real-time sync engine powered by your own Cloudflare Worker.",
-	"author": "Kavin",
-	"authorUrl": "https://github.com/kavinsood",
+	"description": "Real-time Obsidian sync on your own Cloudflare Worker. owlgourd-cloudflare fork of YAOS.",
+	"author": "Nathan Green",
+	"authorUrl": "https://github.com/mrilikecoding/og-cloud",
 	"isDesktopOnly": false
 }

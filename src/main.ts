@@ -6,6 +6,7 @@ import {
 	type VaultSyncSettings,
 } from "./settings";
 import { SettingsStore } from "./settings/settingsStore";
+import { LEGACY_PLUGIN_ID, pluginDir } from "./pluginId";
 import { VaultSync, type ReconcileMode } from "./sync/vaultSync";
 import { SCHEMA_VERSION } from "./sync/vaultSync";
 import { EditorBindingManager } from "./sync/editorBinding";
@@ -388,6 +389,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			scheduleTraceStateSnapshot: (reason) => this.scheduleTraceStateSnapshot(reason),
 			updateSettings: (mutator, reason) => this.updateSettings(mutator, reason),
 		});
+		await this.importLegacySettingsIfNeeded();
 		await this.loadSettings();
 		this.applyRuntimeSettings("load-settings");
 		this.frontmatterGuardCoordinator = new FrontmatterGuardCoordinator({
@@ -2037,6 +2039,41 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			console.error("[yaos] Teardown during unload completed with errors:", error);
 			this.log(`Teardown during unload completed with errors: ${formatUnknown(error)}`);
 		});
+	}
+
+	/**
+	 * First run under the og-cloud id: if we have no settings yet but the
+	 * upstream "yaos" plugin folder has some, adopt them (same server, vault id
+	 * and device identity), then disable the old plugin so two sync engines
+	 * never run against one vault.
+	 */
+	private async importLegacySettingsIfNeeded(): Promise<void> {
+		const adapter = this.app.vault.adapter;
+		const own = `${pluginDir(this.app)}/data.json`;
+		const legacy = `${this.app.vault.configDir}/plugins/${LEGACY_PLUGIN_ID}/data.json`;
+		try {
+			if (await adapter.exists(own)) return;
+			if (!(await adapter.exists(legacy))) return;
+			await adapter.write(own, await adapter.read(legacy));
+			this.log(`Imported settings from legacy plugin "${LEGACY_PLUGIN_ID}"`);
+		} catch (err) {
+			this.log(`Legacy settings import failed: ${formatUnknown(err)}`);
+			return;
+		}
+		// Obsidian's plugin manager is an internal API; degrade to a notice if it moves.
+		try {
+			const plugins = (this.app as unknown as {
+				plugins?: { enabledPlugins?: Set<string>; disablePluginAndSave?: (id: string) => Promise<void> };
+			}).plugins;
+			if (plugins?.enabledPlugins?.has(LEGACY_PLUGIN_ID) && plugins.disablePluginAndSave) {
+				await plugins.disablePluginAndSave(LEGACY_PLUGIN_ID);
+				new Notice("Settings imported from the yaos plugin, which is now disabled. You can remove it.", 12000);
+				return;
+			}
+		} catch (err) {
+			this.log(`Could not disable legacy plugin: ${formatUnknown(err)}`);
+		}
+		new Notice("Settings imported from the yaos plugin. Disable it now so two sync engines do not run at once.", 15000);
 	}
 
 	async loadSettings() {

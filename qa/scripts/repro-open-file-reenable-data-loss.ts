@@ -123,7 +123,7 @@ async function main() {
 	// --- Phase 3: Disable YAOS on B (editor stays open) ---
 
 	log("Phase 3: Disabling YAOS on B (editor remains open)...");
-	await b.evalRaw(`app.plugins.disablePlugin("yaos")`);
+	await b.evalRaw(`app.plugins.disablePlugin("og-cloud")`);
 	await waitMs(3000); // let teardownSync persist baseline cleanly
 	const bDisabled = await b.evalRaw<boolean>(`!app.plugins.plugins.yaos`);
 	log(`B YAOS disabled: ${bDisabled}`);
@@ -182,7 +182,7 @@ async function main() {
 	// --- Phase 6: Re-enable YAOS on B ---
 
 	log("Phase 6: Re-enabling YAOS on B...");
-	await b.evalRaw(`app.plugins.enablePlugin("yaos")`);
+	await b.evalRaw(`app.plugins.enablePlugin("og-cloud")`);
 	await waitMs(5000);
 
 	const bReady = await b.evalRaw<boolean>(`

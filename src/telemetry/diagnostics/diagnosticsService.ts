@@ -1,4 +1,5 @@
 import { App, Platform, apiVersion, normalizePath } from "obsidian";
+import { pluginDir } from "../../pluginId";
 import { deriveSyncFacts } from "../../runtime/connectionFacts";
 import type { BlobSyncSnapshot, DiskMirrorSnapshot, SyncReadPort } from "../telemetryRuntimeHost";
 import type { TraceHttpContext } from "../debug/trace";
@@ -194,7 +195,7 @@ export class DiagnosticsService {
 	}
 
 	async ensureDiagnosticsDir(): Promise<string> {
-		const diagDir = normalizePath(`${this.deps.app.vault.configDir}/plugins/yaos/diagnostics`);
+		const diagDir = normalizePath(`${pluginDir(this.deps.app)}/diagnostics`);
 		if (!(await this.deps.app.vault.adapter.exists(diagDir))) {
 			await this.deps.app.vault.adapter.mkdir(diagDir);
 		}

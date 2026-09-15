@@ -1,4 +1,5 @@
 import type { App } from "obsidian";
+import { pluginDir } from "../../pluginId";
 import type { VaultSyncSettings } from "../../settings";
 import { FlightRecorder, type FlightRecorderOptions } from "./flightRecorder";
 import {
@@ -411,7 +412,7 @@ export class FlightTraceController {
  * or vaultId required. The logs directory is deterministic.
  */
 export async function clearFlightLogs(app: App): Promise<void> {
-	const root = `${app.vault.configDir}/plugins/yaos/flight-logs`;
+	const root = `${pluginDir(app)}/flight-logs`;
 	try {
 		const exists = await app.vault.adapter.exists(root);
 		if (!exists) return;

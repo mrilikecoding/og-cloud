@@ -1,4 +1,5 @@
 import { normalizePath, type App } from "obsidian";
+import { pluginDir } from "../../pluginId";
 import { randomId } from "../../utils/randomId";
 import {
 	FLIGHT_EVENT_SCHEMA_VERSION,
@@ -520,7 +521,7 @@ export class FlightRecorder {
 	}
 
 	private logsRoot(): string {
-		return ensurePrefixDir(`${this.app.vault.configDir}/plugins/yaos/flight-logs`);
+		return ensurePrefixDir(`${pluginDir(this.app)}/flight-logs`);
 	}
 
 	/**

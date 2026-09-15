@@ -63,7 +63,7 @@ async function collectBuildIdentity(
 				const basePath = app.vault.adapter.basePath;
 				const fs = require("fs");
 				const crypto = require("crypto");
-				const buf = fs.readFileSync(basePath + "/.obsidian/plugins/yaos/main.js");
+				const buf = fs.readFileSync(basePath + "/.obsidian/plugins/og-cloud/main.js");
 				bundleHash = crypto.createHash("sha256").update(buf).digest("hex");
 			} catch (e) { /* mobile or missing */ }
 			return {

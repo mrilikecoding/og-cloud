@@ -31,7 +31,7 @@ async function makeLayout(): Promise<{ root: string; paths: PrepareVaultPaths; v
 	await writeFile(join(fixtureDir, "fixture-note.md"), "# fixture\n", "utf8");
 	await writeFile(join(root, "product-main.js"), "// QA product\n", "utf8");
 	await writeFile(join(root, "harness-main.js"), "// QA harness\n", "utf8");
-	await writeFile(join(root, "yaos-manifest.json"), "{\"id\":\"yaos\"}\n", "utf8");
+	await writeFile(join(root, "yaos-manifest.json"), "{\"id\":\"og-cloud\"}\n", "utf8");
 	await writeFile(join(root, "harness-manifest.json"), "{\"id\":\"yaos-qa-harness\"}\n", "utf8");
 	await writeFile(join(root, "plugin-lock.json"), "{\"presets\":{\"minimal\":[]}}\n", "utf8");
 	await writeFile(join(root, "blank-workspace.json"), workspaceBytes, "utf8");
@@ -139,11 +139,11 @@ s.test("creates fresh random vault IDs while keeping plugin order deterministic"
 	const second = await prepareVault({ fixture: "001-known", dest: join(vaultParent, "second") }, paths);
 	assert.notEqual(first.vaultId, second.vaultId);
 
-	const firstSettings = JSON.parse(await readFile(join(first.dest, ".obsidian", "plugins", "yaos", "data.json"), "utf8")) as {
+	const firstSettings = JSON.parse(await readFile(join(first.dest, ".obsidian", "plugins", "og-cloud", "data.json"), "utf8")) as {
 		vaultId: string;
 	};
 	const enabledPlugins = JSON.parse(await readFile(join(first.dest, ".obsidian", "community-plugins.json"), "utf8")) as string[];
 	assert.equal(firstSettings.vaultId, first.vaultId);
-	assert.deepEqual(enabledPlugins, ["yaos", "yaos-qa-harness"]);
+	assert.deepEqual(enabledPlugins, ["og-cloud", "yaos-qa-harness"]);
 });
 await s.done();

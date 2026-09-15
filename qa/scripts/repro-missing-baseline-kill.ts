@@ -43,7 +43,7 @@ const REMOTE_FROM_A = `REMOTE_FROM_A_${RUN_ID}\n`;
 const LOCAL_ON_B = `LOCAL_ON_B_${RUN_ID}\n`;
 
 const VAULT_B = `${process.env.HOME}/temenos-b`;
-const DATA_JSON_B = `${VAULT_B}/.obsidian/plugins/yaos/data.json`;
+const DATA_JSON_B = `${VAULT_B}/.obsidian/plugins/og-cloud/data.json`;
 const PORT_A = 9222;
 const PORT_B = 9223;
 const USER_DATA_B = "/tmp/obs-b";
@@ -223,7 +223,7 @@ async function main() {
 	const bPluginPresent = await b.evalRaw<boolean>(`!!app.plugins.plugins.yaos`).catch(() => false);
 	if (!bPluginPresent) {
 		log("B YAOS plugin not present — re-enabling...");
-		await b.evalRaw(`app.plugins.enablePlugin("yaos")`);
+		await b.evalRaw(`app.plugins.enablePlugin("og-cloud")`);
 		await waitMs(5000);
 	}
 
