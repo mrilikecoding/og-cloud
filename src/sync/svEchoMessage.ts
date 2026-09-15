@@ -31,7 +31,7 @@ export type SvEchoParseResult =
 		 * null from any server that predates it.  Callers MUST keep working
 		 * without it rather than treating its absence as an error.
 		 */
-		durability: { generation: number; epoch: string; degraded: boolean } | null;
+		durability: { generation: number; epoch: string; degraded: boolean; clean: boolean } | null;
 	}
 	| { kind: "invalid_sv_echo"; reason: SvEchoParseFailureReason; bytes: number };
 
@@ -79,7 +79,7 @@ export function handleSvEchoCustomMessage(
 	counters: SvEchoCounters,
 	onAcceptedSvEcho: (
 		sv: Uint8Array,
-		durability: { generation: number; epoch: string; degraded: boolean } | null,
+		durability: { generation: number; epoch: string; degraded: boolean; clean: boolean } | null,
 	) => void,
 ): SvEchoParseResult {
 	const result = parseSvEchoMessageDetailed(payload);
@@ -139,7 +139,7 @@ export function parseSvEchoMessageDetailed(msg: string): SvEchoParseResult {
 		&& generation >= 0
 		&& typeof epoch === "string"
 		&& epoch.length > 0
-			? { generation, epoch, degraded: p.degraded === true }
+			? { generation, epoch, degraded: p.degraded === true, clean: p.clean === true }
 			: null;
 	return { kind: "valid_sv_echo", sv: decoded, bytes, durability };
 }

@@ -404,16 +404,18 @@ export class VaultSyncServer extends YServer<Env> {
 	 * distinguish "applied in memory" from "stored", which the state vector
 	 * cannot express for deletions.
 	 */
-	private svEchoDurability(): { generation: number; epoch: string; degraded?: boolean } {
+	private svEchoDurability(): { generation: number; epoch: string; degraded?: boolean; clean?: boolean } {
 		const health = this.getPersistenceCoordinator().health;
 		// "degraded" means echoes still flow while writes are failing.  A room
 		// whose state would not load never reaches this path: it has no
 		// connections to echo to.
 		const degraded = health.status === "degraded";
+		const clean = !degraded && !health.dirty && !health.pendingPersistence;
 		return {
 			generation: health.persistedGeneration,
 			epoch: health.generationEpoch,
 			...(degraded ? { degraded: true } : {}),
+			...(clean ? { clean: true } : {}),
 		};
 	}
 

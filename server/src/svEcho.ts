@@ -26,6 +26,15 @@ export interface SvEchoDurability {
 	generation: number;
 	epoch: string;
 	/**
+	 * True when everything applied to this instance's document has been
+	 * persisted (nothing dirty, nothing pending).  A freshly loaded instance is
+	 * clean by construction, so a clean echo whose state vector covers a
+	 * client's candidate proves the candidate is stored — even though the
+	 * generation counter restarted at zero.  Under hibernation instances are
+	 * evicted between client probes, so the counter alone never advances.
+	 */
+	clean?: boolean;
+	/**
 	 * True when the room's persistence is degraded.
 	 *
 	 * Carried here because the echo is the only channel the client already
@@ -70,6 +79,7 @@ function svEchoPayload(encodedSv: string, durability?: SvEchoDurability): string
 				gen: durability.generation,
 				genEpoch: durability.epoch,
 				...(durability.degraded ? { degraded: true } : {}),
+				...(durability.clean ? { clean: true } : {}),
 			}
 			: {
 				type: SV_ECHO_TYPE,

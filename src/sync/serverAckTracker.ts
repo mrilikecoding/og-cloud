@@ -232,7 +232,7 @@ export class ServerAckTracker {
 
 	recordServerSvEcho(
 		serverSv: Uint8Array,
-		durability: { generation: number; epoch: string; degraded?: boolean } | null = null,
+		durability: { generation: number; epoch: string; degraded?: boolean; clean?: boolean } | null = null,
 	): void {
 		this._lastServerReceiptEchoAt = Date.now();
 		// Absent marker means a server too old to report health; keep the last
@@ -263,6 +263,13 @@ export class ServerAckTracker {
 					!epochChanged
 					&& this._generationAtCapture !== null
 					&& durability.generation > this._generationAtCapture;
+				// Hibernation evicts the server between our probes, so the counter
+				// above rarely advances within one epoch.  A *clean* echo (nothing
+				// unsaved on the server) whose state vector covers the candidate is
+				// an equally strong "stored" signal, and works after a cold load.
+				if (!confirmed && durability.clean === true) {
+					confirmed = isStateVectorGe(serverSv, this._lastUnconfirmedCandidateSv);
+				}
 				if (this._generationAtCapture === null) {
 					this._generationAtCapture = durability.generation;
 				}
