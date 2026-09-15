@@ -91,6 +91,11 @@ export class ConnectionController {
 	reconnect(reason: string): void {
 		const sync = this.deps.getVaultSync();
 		if (!sync) return;
+		if (sync.fatalAuthError && sync.fatalAuthCode === "unauthorized") {
+			// An explicit reconnect is the user saying "try again"; `unauthorized`
+			// is recoverable (fresh ticket), so honour it instead of refusing.
+			sync.clearFatalAuth();
+		}
 		if (sync.fatalAuthError) {
 			this.deps.log(`Reconnect skipped (${reason}): fatal auth (${sync.fatalAuthCode ?? "unknown"})`);
 			return;
@@ -301,7 +306,12 @@ export class ConnectionController {
 			this.deps.log(`Fast reconnect blocked (${reason}): QA offline hold is active`);
 			return;
 		}
-		if (sync.connected || sync.provider.wsconnecting) {
+		if (sync.provider.wsconnecting) {
+			return;
+		}
+		// A socket that reports connected but carries an expired ticket is a
+		// zombie (laptop sleep); force the cycle so connect() mints a fresh one.
+		if (sync.connected && !sync.isSocketTicketStale()) {
 			return;
 		}
 
@@ -319,7 +329,8 @@ export class ConnectionController {
 			const liveSync = this.deps.getVaultSync();
 			if (!liveSync || liveSync !== sync) return;
 			if (liveSync.fatalAuthError) return;
-			if (liveSync.connected || liveSync.provider.wsconnecting) return;
+			if (liveSync.provider.wsconnecting) return;
+			if (liveSync.connected && !liveSync.isSocketTicketStale()) return;
 
 			this.lastFastReconnectAt = Date.now();
 			this.deps.log(`Fast reconnect triggered (${reason})`);
