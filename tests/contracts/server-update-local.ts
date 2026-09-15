@@ -79,7 +79,7 @@ try {
 		throw new Error("Revert test failed: protected wrangler.toml changes were lost");
 	}
 
-	console.log("Local YAOS server update/revert smoke test passed.");
+	console.log("Local OG-cloud server update/revert smoke test passed.");
 } finally {
 	rmSync(tempDir, { recursive: true, force: true });
 }

@@ -1477,7 +1477,7 @@ export class BlobSyncManager {
 				// and will NOT sync to other devices.
 				try {
 					new Notice(
-						`YAOS: Local-only attachment conflict preserved — "${conflictPath.split("/").pop()}" (this device only)`,
+						`OG-cloud: Local-only attachment conflict preserved — "${conflictPath.split("/").pop()}" (this device only)`,
 						8000,
 					);
 				} catch {

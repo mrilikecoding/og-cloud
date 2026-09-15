@@ -549,7 +549,7 @@ export class ReconciliationController {
 			}
 			if (oversizedCount > 0) {
 				this.deps.log(`reconcile: skipped ${oversizedCount} oversized files`);
-				new Notice(`YAOS: skipped ${oversizedCount} files exceeding ${runtimeConfig.maxFileSizeKB} KB size limit.`);
+				new Notice(`OG-cloud: skipped ${oversizedCount} files exceeding ${runtimeConfig.maxFileSizeKB} KB size limit.`);
 			}
 			if (skippedByIndex > 0) {
 				this.deps.log(`reconcile: ${skippedByIndex} files unchanged (stat match), ${changed.length} changed`);
@@ -629,7 +629,7 @@ export class ReconciliationController {
 				this.deps.log(`Reconcile safety brake: ${safetyBrakeReason}.`);
 				console.error(`[yaos] Reconcile safety brake: ${safetyBrakeReason}.`);
 				new Notice(
-					`YAOS: Reconcile safety brake — ${safetyBrakeReason}. ` +
+					`OG-cloud: Reconcile safety brake — ${safetyBrakeReason}. ` +
 					`Additive creates will continue. Export diagnostics and inspect logs.`,
 				);
 				this.deps.trace("reconcile", "reconcile-safety-brake-blocked", {
@@ -1155,7 +1155,7 @@ export class ReconciliationController {
 		this.deps.log(`Imported ${imported} previously untracked files`);
 
 		if (imported > 0) {
-			new Notice(`YAOS: imported ${imported} files after server sync.`);
+			new Notice(`OG-cloud: imported ${imported} files after server sync.`);
 		}
 	}
 
@@ -2602,7 +2602,7 @@ export class ReconciliationController {
 		const suffix = suppressed > 0
 			? ` (and ${suppressed} other conflict${suppressed > 1 ? "s" : ""} in the last 30s)`
 			: "";
-		new Notice(`YAOS: ${message}${suffix}`, 10000);
+		new Notice(`OG-cloud: ${message}${suffix}`, 10000);
 	}
 
 	/**
@@ -2626,6 +2626,6 @@ export class ReconciliationController {
 		const suffix = suppressed > 0
 			? ` (and ${suppressed} other quarantine${suppressed > 1 ? "s" : ""} in the last 60s)`
 			: "";
-		new Notice(`YAOS: ${message}${suffix}`, 12000);
+		new Notice(`OG-cloud: ${message}${suffix}`, 12000);
 	}
 }

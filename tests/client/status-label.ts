@@ -27,12 +27,12 @@ function label(state: ConnectionState, transfer?: string | null): string {
 	return getLabelFromConnectionState(state, transfer);
 }
 
-s.section("Test 1: baseline connection state labels use YAOS: prefix");
-s.check(label({ kind: "disconnected" }).startsWith("YAOS:"), "disconnected starts with YAOS:");
-s.check(label({ kind: "loading_cache" }).startsWith("YAOS:"), "loading_cache starts with YAOS:");
-s.check(label({ kind: "connecting" }).startsWith("YAOS:"), "connecting starts with YAOS:");
-s.check(label({ kind: "online", generation: 1 }).startsWith("YAOS:"), "online starts with YAOS:");
-s.check(label({ kind: "offline", reason: "provider_disconnected", generation: 1 }).startsWith("YAOS:"), "offline starts with YAOS:");
+s.section("Test 1: baseline connection state labels use OG-cloud: prefix");
+s.check(label({ kind: "disconnected" }).startsWith("OG-cloud:"), "disconnected starts with OG-cloud:");
+s.check(label({ kind: "loading_cache" }).startsWith("OG-cloud:"), "loading_cache starts with OG-cloud:");
+s.check(label({ kind: "connecting" }).startsWith("OG-cloud:"), "connecting starts with OG-cloud:");
+s.check(label({ kind: "online", generation: 1 }).startsWith("OG-cloud:"), "online starts with OG-cloud:");
+s.check(label({ kind: "offline", reason: "provider_disconnected", generation: 1 }).startsWith("OG-cloud:"), "offline starts with OG-cloud:");
 s.check(label({ kind: "disconnected" }).includes("Disconnected"), "disconnected label readable");
 s.check(label({ kind: "loading_cache" }).includes("Loading"), "loading_cache label readable");
 s.check(label({ kind: "connecting" }).includes("Connecting"), "connecting label readable");
@@ -197,7 +197,7 @@ const errorWithReceipt = getLabelFromConnectionState(
 );
 s.check(!errorWithReceipt.includes("Receipt:"), "auth/error labels omit receipt suffix");
 
-s.section("Test 5: every ConnectionState kind produces a distinct YAOS: label");
+s.section("Test 5: every ConnectionState kind produces a distinct OG-cloud: label");
 const allStates: ConnectionState[] = [
 	{ kind: "disconnected" },
 	{ kind: "loading_cache" },
@@ -212,7 +212,7 @@ const allStates: ConnectionState[] = [
 const seen = new Set<string>();
 for (const state of allStates) {
 	const l = label(state);
-	s.check(l.startsWith("YAOS:"), `label for ${state.kind} starts with "YAOS:" (not "CRDT:")`);
+	s.check(l.startsWith("OG-cloud:"), `label for ${state.kind} starts with "OG-cloud:" (not "CRDT:")`);
 	s.check(!l.includes("CRDT"), `label for ${state.kind} does not contain implementation detail "CRDT"`);
 	s.check(l.length > 6, `label for ${state.kind} has content`);
 	s.check(!seen.has(l), `label for ${state.kind} is distinct from previous labels`);

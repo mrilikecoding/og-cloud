@@ -109,7 +109,7 @@ type PersistedPluginState = Partial<VaultSyncSettings> & {
 	 * Unix ms timestamp of the last successful saveDiskIndex() call.
 	 * Semantically: "the last time YAOS durably persisted its disk-index
 	 * baselines to data.json." Used by decideClosedFileConflict to detect
-	 * "disk file was edited while YAOS was inactive" when baselineHash is
+	 * "disk file was edited while OG-cloud was inactive" when baselineHash is
 	 * missing. This is a heuristic timestamp — it is the last save, not
 	 * necessarily the last time YAOS observed the specific file.
 	 * See: src/sync/closedFileConflict.ts ClosedFileConflictInput.lastDiskIndexPersistedAt
@@ -1002,7 +1002,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			const schemaError = this.vaultSync.checkSchemaVersion();
 			if (schemaError) {
 				console.error(`[yaos] ${schemaError}`);
-				new Notice(`YAOS: ${schemaError}`);
+				new Notice(`OG-cloud: ${schemaError}`);
 				this.updateStatusBar("error");
 				return;
 			}
@@ -1070,7 +1070,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			}
 		} catch (err) {
 			console.error("[yaos] Failed to initialize sync:", err);
-			new Notice(`YAOS: failed to initialize — ${formatUnknown(err)}`);
+			new Notice(`OG-cloud: failed to initialize — ${formatUnknown(err)}`);
 			this.updateStatusBar("error");
 		}
 	}
@@ -1606,7 +1606,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				this.log("Nuclear reset: reinitializing (will re-seed from disk)");
 				await this.initSync(true);
 				new Notice(
-					`YAOS: nuclear reset complete. ` +
+					`OG-cloud: nuclear reset complete. ` +
 					`Re-seeded ${this.vaultSync?.getActiveMarkdownPaths().length ?? 0} files from disk.`,
 				);
 			},
@@ -1807,8 +1807,8 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		if (degraded === this.serverPersistenceDegradedNotified) return;
 		this.serverPersistenceDegradedNotified = degraded;
 		const notice = degraded
-			? "YAOS: The server is not saving changes. Edits still sync between open devices, but anything made now may be lost. Avoid bulk edits or deletions until this clears."
-			: "YAOS: The server is saving changes again.";
+			? "OG-cloud: The server is not saving changes. Edits still sync between open devices, but anything made now may be lost. Avoid bulk edits or deletions until this clears."
+			: "OG-cloud: The server is saving changes again.";
 		new Notice(notice, degraded ? 15000 : 6000);
 	}
 
@@ -2201,7 +2201,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		const vaultId = this.settings.vaultId?.trim();
 		if (!host || !token || !vaultId) return null;
 		return [
-			"YAOS Recovery Kit",
+			"OG-cloud Recovery Kit",
 			`Created: ${new Date().toISOString()}`,
 			"",
 			`Host: ${host}`,
@@ -2241,7 +2241,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 			updateRepoUrl: null,
 			updateActionUrl: null,
 			updateBootstrapUrl: null,
-			updateActionLabel: "YAOS settings",
+			updateActionLabel: "OG-cloud settings",
 			legacyServerDetected: false,
 			pluginCompatibilityWarning: null,
 		};
@@ -2280,8 +2280,8 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 					? ` (client=${details.clientSchemaVersion ?? "unknown"}, room=${details.roomSchemaVersion ?? "unknown"})`
 					: "";
 			new Notice(
-				`YAOS: this vault was upgraded by a newer plugin schema${detailText}. ` +
-				"Update YAOS on this device to continue syncing.",
+				`OG-cloud: this vault was upgraded by a newer plugin schema${detailText}. ` +
+				"Update OG-cloud on this device to continue syncing.",
 				12000,
 			);
 			return;
@@ -2490,8 +2490,8 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		void this.attachmentOrchestrator?.stop("idb-degraded");
 
 		const notice = kind === "quota_exceeded"
-			? "YAOS: Device storage is full. Sync durability is degraded and attachment transfers are paused. Free up storage, then restart Obsidian."
-			: "YAOS: IndexedDB persistence failed. Sync durability is degraded and attachment transfers are paused.";
+			? "OG-cloud: Device storage is full. Sync durability is degraded and attachment transfers are paused. Free up storage, then restart Obsidian."
+			: "OG-cloud: IndexedDB persistence failed. Sync durability is degraded and attachment transfers are paused.";
 		new Notice(notice, 12000);
 	}
 }

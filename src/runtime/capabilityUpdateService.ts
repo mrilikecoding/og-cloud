@@ -234,7 +234,7 @@ export class CapabilityUpdateService {
 		this.compatibilityBlockReason = blockReason;
 		this.deps.log(`Compatibility guard (${reason}): ${blockReason}`);
 		if (firstBlock) {
-			new Notice(`YAOS: ${blockReason}`, 12000);
+			new Notice(`OG-cloud: ${blockReason}`, 12000);
 		}
 
 		this.deps.stopSyncRuntimeForCompatibility();
@@ -291,7 +291,7 @@ export class CapabilityUpdateService {
 		const minPluginVersion = this.serverCapabilities?.minPluginVersion ?? null;
 		if (minPluginVersion && compareSemver(this.deps.pluginVersion, minPluginVersion) === -1) {
 			pluginCompatibilityWarning =
-				`This server requires YAOS plugin ${minPluginVersion} or newer.`;
+				`This server requires OG-cloud plugin ${minPluginVersion} or newer.`;
 		} else {
 			const serverSchemaVersion = this.serverCapabilities?.schemaVersion ?? null;
 			if (serverSchemaVersion !== null && this.deps.schemaVersion < serverSchemaVersion) {
@@ -318,7 +318,7 @@ export class CapabilityUpdateService {
 				? effectiveProvider === "gitlab"
 					? "your GitLab pipeline"
 					: "your GitHub workflow"
-				: "YAOS settings",
+				: "OG-cloud settings",
 			legacyServerDetected: this.legacyServerDetected,
 			pluginCompatibilityWarning,
 		};
@@ -404,7 +404,7 @@ export class CapabilityUpdateService {
 
 		const minPluginVersion = this.serverCapabilities.minPluginVersion;
 		if (minPluginVersion && compareSemver(this.deps.pluginVersion, minPluginVersion) === -1) {
-			return `This server requires YAOS plugin ${minPluginVersion} or newer. Update this plugin before syncing.`;
+			return `This server requires OG-cloud plugin ${minPluginVersion} or newer. Update this plugin before syncing.`;
 		}
 
 		const serverSchemaVersion = this.serverCapabilities.schemaVersion;
@@ -425,7 +425,7 @@ export class CapabilityUpdateService {
 		const pluginVsLatest = compareSemver(this.deps.pluginVersion, latestPluginVersion);
 		const serverVsRequired = compareSemver(serverVersion, minCompatibleServer);
 		if (pluginVsLatest !== null && serverVsRequired !== null && pluginVsLatest >= 0 && serverVsRequired === -1) {
-			return `This plugin requires YAOS server ${minCompatibleServer} or newer. Update server first.`;
+			return `This plugin requires OG-cloud server ${minCompatibleServer} or newer. Update server first.`;
 		}
 		return null;
 	}
@@ -542,8 +542,8 @@ export class CapabilityUpdateService {
 		if (gainedR2) {
 			new Notice(
 				this.deps.getSettings().enableAttachmentSync
-					? "YAOS: R2 backend detected. Attachments and snapshots are now available."
-					: "YAOS: R2 backend detected. Attachments and snapshots are available if you enable them in settings.",
+					? "OG-cloud: R2 backend detected. Attachments and snapshots are now available."
+					: "OG-cloud: R2 backend detected. Attachments and snapshots are available if you enable them in settings.",
 				7000,
 			);
 			if (this.deps.isSyncConnectedAndProviderSynced() && this.supportsSnapshots) {
@@ -670,14 +670,14 @@ export class CapabilityUpdateService {
 			if (this.lastServerUpdateNoticeVersion !== updateState.latestServerVersion) {
 				if (!updateState.updateActionUrl) {
 					new Notice(
-						`YAOS: server update ${updateState.latestServerVersion} is available. ` +
-						"Set your deployment repo URL in YAOS settings to enable 1-click updates.",
+						`OG-cloud: server update ${updateState.latestServerVersion} is available. ` +
+						"Set your deployment repo URL in OG-cloud settings to enable 1-click updates.",
 						12000,
 					);
 				} else {
 					const actionLabel = updateState.updateActionLabel;
 					new Notice(
-						`YAOS: a server update (${updateState.latestServerVersion}) is available. Open ${actionLabel} to update when ready.`,
+						`OG-cloud: a server update (${updateState.latestServerVersion}) is available. Open ${actionLabel} to update when ready.`,
 						10000,
 					);
 				}
@@ -691,7 +691,7 @@ export class CapabilityUpdateService {
 		if (updateState.pluginUpdateRecommended && updateState.latestPluginVersion) {
 			if (this.lastPluginUpdateNoticeVersion !== updateState.latestPluginVersion) {
 				new Notice(
-					`YAOS: plugin update recommended (${updateState.latestPluginVersion}). Update this device to stay current with server compatibility guidance.`,
+					`OG-cloud: plugin update recommended (${updateState.latestPluginVersion}). Update this device to stay current with server compatibility guidance.`,
 					10000,
 				);
 				this.lastPluginUpdateNoticeVersion = updateState.latestPluginVersion;

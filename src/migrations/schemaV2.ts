@@ -47,7 +47,7 @@ export const runSchemaMigrationToV2 = (context: SchemaV2MigrationContext): void 
 	new ConfirmModal(
 		context.app,
 		"Migrate sync schema to v2",
-		"This will switch this vault to schema v2 and block older YAOS clients from syncing " +
+		"This will switch this vault to schema v2 and block older OG-cloud clients from syncing " +
 			"until they are upgraded. Continue?",
 		async () => {
 			const activeVaultSync = context.vaultSync as VaultSync | null;
@@ -69,9 +69,9 @@ export const runSchemaMigrationToV2 = (context: SchemaV2MigrationContext): void 
 			await context.runReconciliation();
 
 			new Notice(
-				`YAOS: schema v2 migration complete` +
+				`OG-cloud: schema v2 migration complete` +
 					(loserCleanupCount > 0 ? ` (${loserCleanupCount} local alias file(s) cleaned).` : ".") +
-					" Update YAOS on your other devices before reconnecting them.",
+					" Update OG-cloud on your other devices before reconnecting them.",
 				12000,
 			);
 		},

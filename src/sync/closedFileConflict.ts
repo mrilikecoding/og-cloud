@@ -24,7 +24,7 @@ export interface ClosedFileConflictInput {
 	/**
 	 * Unix ms timestamp of the last successful saveDiskIndex() call.
 	 * Persisted in data.json as _lastDiskIndexPersistedAt.
-	 * Semantics: "last time YAOS durably persisted disk-index baselines."
+	 * Semantics: "last time OG-cloud durably persisted disk-index baselines."
 	 * This is a GLOBAL heuristic — not per-file. It can produce false negatives
 	 * when an unrelated file triggers a save after the target file was modified.
 	 * See docs/BACKLOG.md QA-03 for the known limits.
