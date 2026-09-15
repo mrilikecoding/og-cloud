@@ -33,7 +33,7 @@ import {
 export const TRACE_HEADER_FORMAT_VERSION = 1;
 
 const HEADER_README =
-	"First line of a YAOS debug trace. Every following line is one JSON event, " +
+	"First line of an OG-cloud debug trace. Every following line is one JSON event, " +
 	"ordered causally by its `seq` field. When `redacted` is true, vault file " +
 	"paths appear only as stable `pathId` pseudonyms and the server URL, vault id " +
 	"and device name are withheld; when it is false, `pathDirectory` maps every " +

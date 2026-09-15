@@ -107,7 +107,7 @@ type PersistedPluginState = Partial<VaultSyncSettings> & {
 	_blobHashCache?: BlobHashCache;
 	/**
 	 * Unix ms timestamp of the last successful saveDiskIndex() call.
-	 * Semantically: "the last time YAOS durably persisted its disk-index
+	 * Semantically: "the last time OG-cloud durably persisted its disk-index
 	 * baselines to data.json." Used by decideClosedFileConflict to detect
 	 * "disk file was edited while OG-cloud was inactive" when baselineHash is
 	 * missing. This is a heuristic timestamp — it is the last save, not
@@ -198,7 +198,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 	private diskIndex: DiskIndex = {};
 	/**
 	 * Unix ms timestamp of the last saveDiskIndex() that completed successfully.
-	 * Semantics: "last time YAOS durably persisted disk-index state."
+	 * Semantics: "last time OG-cloud durably persisted disk-index state."
 	 * This is a global (not per-file) heuristic timestamp used only as a
 	 * tie-breaker in the missing-baseline closed-file conflict path.
 	 * Naming: lastDiskIndexPersistedAt, not lastPluginActiveAt — these are
@@ -609,10 +609,10 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		if (!this.settings.token) {
 			this.log("Token not configured — sync disabled");
 			const message = this.serverAuthMode === "env"
-				? "YAOS: configure the server token in settings to enable sync."
+				? "OG-cloud: configure the server token in settings to enable sync."
 				: this.serverAuthMode === "claim" || this.serverAuthMode === "unclaimed"
-						? "YAOS: claim the server in a browser, then use the YAOS setup link to fill in the token."
-						: "YAOS: configure a token in settings, or claim the server in a browser first.";
+						? "OG-cloud: claim the server in a browser, then use the OG-cloud setup link to fill in the token."
+						: "OG-cloud: configure a token in settings, or claim the server in a browser first.";
 			new Notice(message, 10000);
 			finishOnload("missing-token");
 			return;
