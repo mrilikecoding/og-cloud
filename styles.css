@@ -13,6 +13,7 @@
 .og-cloud-status-text {
 	display: inline-block;
 	min-width: 21ch;
+	text-align: right;
 }
 .og-cloud-status-dot {
 	display: inline-block;
