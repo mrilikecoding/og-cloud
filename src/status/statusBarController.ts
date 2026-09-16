@@ -234,8 +234,8 @@ export function renderConnectionState(
 ): CompactStatus {
 	const compact = getCompactStatus(state, transferStatus, serverReceipt, attentionCount);
 	statusBarEl.empty();
+	statusBarEl.createSpan({ cls: "og-cloud-status-text", text: compact.text });
 	statusBarEl.createSpan({ cls: `og-cloud-status-dot og-cloud-status-dot-${compact.tone}` });
-	statusBarEl.createSpan({ text: compact.text });
 	const explanation = serverReceipt && shouldShowReceiptStatus(state)
 		? getServerReceiptStatusTitle(serverReceipt)
 		: "";

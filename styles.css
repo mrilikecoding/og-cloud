@@ -7,13 +7,19 @@
 	opacity: 0.8;
 }
 
-/* Compact status: a coloured dot, the product name, one state word. */
+/* Compact status: the product name and one state word in a fixed-minimum
+   width, then a coloured dot. The width fits the longest word so the dot
+   does not shift as the state changes; a transfer status can still widen it. */
+.og-cloud-status-text {
+	display: inline-block;
+	min-width: 21ch;
+}
 .og-cloud-status-dot {
 	display: inline-block;
 	width: 8px;
 	height: 8px;
 	border-radius: 50%;
-	margin-right: 5px;
+	margin-left: 6px;
 	vertical-align: middle;
 	background: var(--text-muted);
 }
