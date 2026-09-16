@@ -481,7 +481,10 @@ export class VaultSync {
 				this.scheduleSocketTicketRefresh(ticket);
 			},
 			connect: () => this.provider.connect(),
+			isConnected: () => this.provider.wsconnected,
 			log: (message) => this.log(message),
+			setTimer: (fn, ms) => window.setTimeout(fn, ms),
+			clearTimer: (handle) => window.clearTimeout(handle as number),
 		});
 
 		const handleFatalAuthPayload = (payload: string) => {
@@ -2094,6 +2097,7 @@ export class VaultSync {
 	}
 
 	async destroy(): Promise<void> {
+		this._unauthorizedRecovery.dispose();
 		this.log("Destroying VaultSync");
 		if (this._renameTimer) window.clearTimeout(this._renameTimer);
 		this.clearSocketTicketRefreshTimer();
