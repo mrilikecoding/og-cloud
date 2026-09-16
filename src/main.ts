@@ -183,6 +183,8 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 	/** Domain-level trace sink. Routes to the debug runtime when active, noop otherwise. */
 	private traceSink: TraceSink = new NoopTraceSink();
 	private statusBarEl: HTMLElement | null = null;
+	/** Full status text behind the compact bar, shown on click. */
+	private lastStatusFull: string | null = null;
 	private statusInterval: number | null = null;
 	private readonly receiptStatusRefresh = new CoalescedStatusRefresh(() => {
 		if (!this.teardownLifecycle.isClosing) this.refreshStatusBar();
@@ -580,6 +582,11 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		this.addSettingTab(new VaultSyncSettingTab(this.app, this, this));
 
 		this.statusBarEl = this.addStatusBarItem();
+		this.statusBarEl.addClass("mod-clickable");
+		this.registerDomEvent(this.statusBarEl, "click", () => {
+			// The bar shows a dot and a word; the click shows what they stand for.
+			if (this.lastStatusFull) new Notice(this.lastStatusFull, 8000);
+		});
 		this.updateStatusBar("disconnected");
 
 		const finishOnload = (outcome: string): void => {
@@ -1788,7 +1795,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		} : null;
 		this.noticeServerPersistenceHealth(vaultSync?.serverPersistenceDegraded ?? false);
 		if (connectionState) {
-			renderConnectionState(this.statusBarEl, connectionState, transferStatus, serverReceipt, attentionCount);
+			this.lastStatusFull = renderConnectionState(this.statusBarEl, connectionState, transferStatus, serverReceipt, attentionCount).full;
 		} else {
 			renderSyncStatus(this.statusBarEl, _coarseState, transferStatus, attentionCount);
 		}

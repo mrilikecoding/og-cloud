@@ -152,6 +152,59 @@ export function getServerReceiptStatusLabel(
 	return label;
 }
 
+export type StatusTone = "green" | "orange" | "red" | "grey";
+
+export interface CompactStatus {
+	tone: StatusTone;
+	word: string;
+	/** What the bar shows: "OG-cloud <word>" plus any transfer status. */
+	text: string;
+	/** The full label, for hover and click. */
+	full: string;
+}
+
+/**
+ * One dot colour and one word for the status bar. The full label still
+ * exists (hover and click); this is the glance version. Overrides rank the
+ * same way the full label does: "Server not saving" first, because a healthy
+ * socket is what hides it, then files needing attention, then the state.
+ */
+export function getCompactStatus(
+	state: ConnectionState,
+	transferStatus?: string | null,
+	serverReceipt?: ServerReceiptStatus | null,
+	attentionCount = 0,
+): CompactStatus {
+	let tone: StatusTone;
+	let word: string;
+	switch (state.kind) {
+		case "disconnected": tone = "grey"; word = "Disconnected"; break;
+		case "loading_cache": tone = "grey"; word = "Loading"; break;
+		case "connecting": tone = "grey"; word = "Connecting"; break;
+		case "online": tone = "green"; word = "Connected"; break;
+		case "offline": tone = "orange"; word = "Offline"; break;
+		case "auth_failed":
+			tone = "red";
+			word = state.code === "unauthorized" ? "Auth" : "Server";
+			break;
+		case "server_update_required": tone = "red"; word = "Update"; break;
+	}
+	if (serverReceipt && shouldShowReceiptStatus(state)) {
+		const applied = serverReceipt.serverAppliedLocalState;
+		if (state.kind === "online") {
+			if (applied === true) { tone = "green"; word = "Saved"; }
+			else if (applied === false) { tone = "orange"; word = "Pending"; }
+			else { tone = "orange"; word = "Checking"; }
+		} else if (applied === false) {
+			word = "Unsent";
+		}
+	}
+	if (attentionCount > 0) { tone = "red"; word = "Attention"; }
+	if (serverReceipt?.serverPersistenceDegraded === true) { tone = "red"; word = "Not saving"; }
+	const text = transferStatus ? `OG-cloud ${word} (${transferStatus})` : `OG-cloud ${word}`;
+	return { tone, word, text, full: getLabelFromConnectionState(state, transferStatus, serverReceipt, attentionCount) };
+}
+
 export function renderSyncStatus(
 	statusBarEl: HTMLElement,
 	state: SyncStatus,
@@ -178,10 +231,14 @@ export function renderConnectionState(
 	transferStatus?: string | null,
 	serverReceipt?: ServerReceiptStatus | null,
 	attentionCount = 0,
-): void {
-	statusBarEl.setText(getLabelFromConnectionState(state, transferStatus, serverReceipt, attentionCount));
-	const title = serverReceipt && shouldShowReceiptStatus(state)
+): CompactStatus {
+	const compact = getCompactStatus(state, transferStatus, serverReceipt, attentionCount);
+	statusBarEl.empty();
+	statusBarEl.createSpan({ cls: `og-cloud-status-dot og-cloud-status-dot-${compact.tone}` });
+	statusBarEl.createSpan({ text: compact.text });
+	const explanation = serverReceipt && shouldShowReceiptStatus(state)
 		? getServerReceiptStatusTitle(serverReceipt)
 		: "";
-	statusBarEl.setAttr("title", title);
+	statusBarEl.setAttr("title", explanation ? `${compact.full}\n\n${explanation}` : compact.full);
+	return compact;
 }
