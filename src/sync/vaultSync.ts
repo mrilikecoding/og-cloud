@@ -36,7 +36,8 @@ import {
 import type { CandidateStore, ScopeKey, ScopeMetadata } from "./candidateStore";
 import { PRODUCT_EVENT_KIND } from "../observability/productEventKinds";
 import type { ProductFlightPathEventInput } from "../observability/traceSink";
-import { SocketTicketHttpError, TICKET_REFRESH_BUFFER_MS, patchTicketInUrl } from "./socketTicket";
+import { TICKET_REFRESH_BUFFER_MS, patchTicketInUrl } from "./socketTicket";
+import { UnauthorizedRecovery } from "./unauthorizedRecovery";
 
 /** Current schema version. Stored in sys.schemaVersion. */
 export { SCHEMA_VERSION } from "./schema";
@@ -54,12 +55,6 @@ const PROVIDER_SYNC_TIMEOUT_MS = 10_000;
  * timing provides sufficient de-correlation.
  */
 const MAX_BACKOFF_TIME_MS = 30_000;
-/**
- * After an `unauthorized` socket rejection we fetch a fresh ticket and retry
- * once. A second rejection inside this window means the token itself is bad
- * (or the server changed), so we latch the fatal state as before.
- */
-const UNAUTHORIZED_RETRY_WINDOW_MS = 60_000;
 
 /** Debounce window for batching rename events (folder renames). */
 const RENAME_BATCH_MS = 50;
@@ -261,9 +256,8 @@ export class VaultSync {
 	} | null = null;
 	/** Local expiry of the ticket currently in provider.url (0 = unknown / legacy token). */
 	private _socketTicketLocalExpiresAt = 0;
-	/** Last time an `unauthorized` was answered with a fresh-ticket retry instead of latching. */
-	private _lastUnauthorizedRetryAt = 0;
-	private _unauthorizedRetryInFlight = false;
+	/** Answers `unauthorized` frames with a fresh ticket before treating them as fatal. */
+	private readonly _unauthorizedRecovery: UnauthorizedRecovery;
 
 	/** True if IndexedDB encountered an error (unavailable, quota, etc). */
 	private _idbError = false;
@@ -476,51 +470,28 @@ export class VaultSync {
 			this.resolvePendingProviderSyncWaiters(false);
 		};
 
+		this._unauthorizedRecovery = new UnauthorizedRecovery({
+			getTicket: this._getSocketTicket,
+			disconnect: () => {
+				this.provider.disconnect();
+				this.clearSocketTicketRefreshTimer();
+			},
+			applyTicket: (ticket) => {
+				this.patchProviderTicket(ticket.value);
+				this.scheduleSocketTicketRefresh(ticket);
+			},
+			connect: () => this.provider.connect(),
+			log: (message) => this.log(message),
+		});
+
 		const handleFatalAuthPayload = (payload: string) => {
 			const msg = parseFatalAuthMessage(payload);
 			if (!msg) {
 				return;
 			}
-			// `unauthorized` is usually our own fault: y-partyserver's internal
-			// reconnect loop reuses provider.url, and after laptop sleep that URL
-			// carries an expired ticket. The long-lived token is still valid, so
-			// fetch a fresh ticket and retry once before treating it as fatal.
-			const canRetry =
-				msg.code === "unauthorized" &&
-				this._getSocketTicket !== null &&
-				!this._unauthorizedRetryInFlight &&
-				Date.now() - this._lastUnauthorizedRetryAt > UNAUTHORIZED_RETRY_WINDOW_MS;
-			if (!canRetry) {
+			if (!this._unauthorizedRecovery.handle(msg.code, () => latchFatalAuth(msg))) {
 				latchFatalAuth(msg);
-				return;
 			}
-			this._unauthorizedRetryInFlight = true;
-			this._lastUnauthorizedRetryAt = Date.now();
-			this.log("Auth rejected (unauthorized) — assuming stale socket ticket; fetching a fresh one and retrying once");
-			this.provider.disconnect();
-			this.clearSocketTicketRefreshTimer();
-			void (async () => {
-				try {
-					const ticket = await this._getSocketTicket!(true);
-					if (!ticket) {
-						// Server has no ticket endpoint, so the legacy token itself was rejected.
-						latchFatalAuth(msg);
-						return;
-					}
-					this.patchProviderTicket(ticket.value);
-					this.scheduleSocketTicketRefresh(ticket);
-					await this.provider.connect();
-				} catch (err) {
-					if (err instanceof SocketTicketHttpError && (err.status === 401 || err.status === 403)) {
-						// Fresh ticket refused: the token really is bad.
-						latchFatalAuth(msg);
-					} else {
-						this.log(`Ticket refresh after unauthorized failed (${formatUnknown(err)}); leaving reconnect to the normal path`);
-					}
-				} finally {
-					this._unauthorizedRetryInFlight = false;
-				}
-			})();
 		};
 
 		// y-partyserver emits "__YPS:" control payloads via "custom-message".
@@ -1946,7 +1917,7 @@ export class VaultSync {
 		this._fatalAuthError = false;
 		this._fatalAuthCode = null;
 		this._fatalAuthDetails = null;
-		this._lastUnauthorizedRetryAt = 0;
+		this._unauthorizedRecovery.reset();
 	}
 
 	get fatalAuthError(): boolean {
