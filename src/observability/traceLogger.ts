@@ -21,4 +21,6 @@ export interface TraceLoggerConfig {
 	enabled: boolean;
 	deviceName: string;
 	vaultId: string;
+	/** Per-boot ceiling for the state-history file; current-state.json is unaffected. */
+	maxStateHistoryBytes?: number;
 }

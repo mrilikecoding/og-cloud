@@ -31,6 +31,13 @@ const FLUSH_DELAY_MS = 400;
 const STATE_WRITE_DELAY_MS = 600;
 const MAX_PENDING_LINES = 2_000;
 const MAX_PENDING_CHARS_APPROX = 512 * 1024;
+/**
+ * A full state snapshot lands every few seconds while debug is on, and each
+ * one is tens of kilobytes, so an uncapped history reached hundreds of MB in
+ * a day. The history exists to reconstruct how a state came about; the first
+ * chunk of a session is what that needs. current-state.json keeps updating.
+ */
+const DEFAULT_MAX_STATE_HISTORY_BYTES = 16 * 1024 * 1024;
 
 function isAlreadyExistsError(error: unknown): boolean {
 	if (typeof error === "object" && error !== null && "code" in error) {
@@ -64,6 +71,9 @@ export class PersistentTraceLogger implements TraceLoggerPort {
 	private readonly enabled: boolean;
 	private readonly context: TraceHttpContext;
 	private readonly rootDir: string;
+	private readonly maxStateHistoryBytes: number;
+	private stateHistoryBytes = 0;
+	private stateHistoryCapped = false;
 
 	private pendingLines: string[] = [];
 	private flushTimer: number | null = null;
@@ -80,9 +90,11 @@ export class PersistentTraceLogger implements TraceLoggerPort {
 			enabled: boolean;
 			deviceName: string;
 			vaultId: string;
+			maxStateHistoryBytes?: number;
 		},
 	) {
 		this.enabled = options.enabled;
+		this.maxStateHistoryBytes = options.maxStateHistoryBytes ?? DEFAULT_MAX_STATE_HISTORY_BYTES;
 		this.context = {
 			traceId: `trace-${randomId(14)}`,
 			bootId: `boot-${randomId(14)}`,
@@ -136,6 +148,16 @@ export class PersistentTraceLogger implements TraceLoggerPort {
 						this.currentStatePath(),
 						serialized,
 					);
+					if (this.stateHistoryCapped) return;
+					if (this.stateHistoryBytes + historyLine.length > this.maxStateHistoryBytes) {
+						this.stateHistoryCapped = true;
+						this.record("trace", "state-history-capped", {
+							bytes: this.stateHistoryBytes,
+							cap: this.maxStateHistoryBytes,
+						});
+						return;
+					}
+					this.stateHistoryBytes += historyLine.length;
 					await ensureDirRecursive(this.app, this.sessionDir());
 					await this.app.vault.adapter.append(
 						this.stateHistoryPath(),
