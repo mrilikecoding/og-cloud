@@ -30,6 +30,7 @@ import {
 	ORIGIN_EDITOR_HEALTH_HEAL,
 	ORIGIN_SEED,
 	ORIGIN_RESTORE,
+	ORIGIN_TIMESTAMP,
 } from "../../src/sync/origins";
 import { repoRoot, suite } from "../harness.ts";
 
@@ -160,4 +161,15 @@ s.section("Test 6: no raw string literals as applyDiffToYText origin in src/ (FU
 		`no raw string literals as applyDiffToYText origin in src/ (${violations.length === 0 ? "clean" : violations.map((v) => `"${v.origin}" in ${v.file}`).join(", ")})`,
 	);
 }
+
+s.section("Test 7: ORIGIN_TIMESTAMP is deliberately NOT a local-repair origin");
+// The timestamp stamper edits `modified:` in the Y.Text after user typing.
+// Obsidian's autosave only writes the editor buffer while the note is open;
+// a note closed before the debounce fires would otherwise leave the stamp in
+// the CRDT with nothing writing it to disk. Classifying the origin as remote
+// routes it through the mirror's write path (open and closed files alike).
+s.check(ORIGIN_TIMESTAMP === "timestamp-stamp", "ORIGIN_TIMESTAMP === 'timestamp-stamp'");
+s.check(isLocalStringOrigin(ORIGIN_TIMESTAMP) === false, "not registered as local");
+s.check(isLocalOrigin(ORIGIN_TIMESTAMP, provider) === false, "mirror schedules a write for it");
+
 await s.done();

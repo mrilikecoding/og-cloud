@@ -18,6 +18,16 @@ export const ORIGIN_DISK_SYNC_OPEN_IDLE_RECOVER = "disk-sync-open-idle-recover" 
 export const ORIGIN_EDITOR_HEALTH_HEAL = "editor-health-heal" as const;
 
 /**
+ * Timestamp stamper edits to `created:` / `modified:` frontmatter.
+ *
+ * Deliberately NOT in LOCAL_STRING_ORIGIN_SET. The stamp must reach disk
+ * even when the note was closed before the debounce fired, and Obsidian's
+ * autosave only covers an open editor. Classifying it as remote sends it
+ * through the disk mirror's ordinary write path. See docs/timestamp-stamper.md.
+ */
+export const ORIGIN_TIMESTAMP = "timestamp-stamp" as const;
+
+/**
  * Internal set — not exported directly to prevent mutable cast-away access.
  * Use isLocalOrigin() for gate decisions or LOCAL_REPAIR_ORIGINS for
  * enumeration in tests.
