@@ -94,6 +94,7 @@ s.section("Declarative settings inventory");
 		"Edits from other apps",
 		"Frontmatter safety guard",
 		"Debug mode",
+		"Maintain created and modified timestamps",
 	]) {
 		s.check(names.has(name), `${name} is searchable through a setting definition`);
 	}
