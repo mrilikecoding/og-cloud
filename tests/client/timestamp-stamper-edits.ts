@@ -87,4 +87,23 @@ s.section("Test 10: edits are sorted by from descending");
 	s.check(edits[0]!.from > edits[1]!.from, "descending");
 }
 
+s.section("Test 11: bare key (no value) gets space before timestamp");
+{
+	const text1 = "---\nmodified:\n---\nbody\n";
+	const edits1 = computeTimestampEdits(text1, NOW, { withCreated: false });
+	s.check(apply(text1, edits1) === `---\nmodified: ${NOW}\n---\nbody\n`, "bare key gets space");
+
+	const text2 = "---\nmodified: \n---\n";
+	const edits2 = computeTimestampEdits(text2, NOW, { withCreated: false });
+	s.check(apply(text2, edits2) === `---\nmodified: ${NOW}\n---\n`, "key with space gets value");
+}
+
+s.section("Test 12: Test 4 regression check");
+{
+	const old = "2023-02-16T10:00:00-08:00";
+	const text = `---\ncreated: 2022-01-01T00:00:00-08:00\nmodified: ${old}\n---\nbody\n`;
+	const edits = computeTimestampEdits(text, NOW, { withCreated: false });
+	s.check(edits[0]!.to - edits[0]!.from === old.length, "range covers exactly the old value");
+}
+
 await s.done();

@@ -71,7 +71,17 @@ export function computeTimestampEdits(
 		edits.push({ from: block.end, to: block.end, insert: append });
 	}
 	if (modified !== null && text.slice(modified.from, modified.to) !== now) {
-		edits.push({ from: modified.from, to: modified.to, insert: now });
+		let insert = now;
+		// If range is empty and char before `from` is a colon (no space follows it),
+		// prepend a space to avoid bare scalar in YAML (e.g., "modified:2026..." is invalid).
+		if (
+			modified.from === modified.to
+			&& modified.from > 0
+			&& text.charCodeAt(modified.from - 1) === 58
+		) {
+			insert = " " + now;
+		}
+		edits.push({ from: modified.from, to: modified.to, insert });
 	}
 
 	edits.sort((a, b) => b.from - a.from);
