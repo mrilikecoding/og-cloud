@@ -25,17 +25,22 @@ enabled, ten after, every divergence exactly one timestamp block or line.
 - Notes without a `modified` key get one appended inside their existing block.
   Notes with no frontmatter get a minimal block `---\nmodified: …\n---\n`.
   A malformed block (no closing fence) is left alone.
+- A pre-existing bare `created:` placeholder is left as it is; only a missing
+  key is ever added.
 - Format is `YYYY-MM-DDTHH:mm:ssZ` from Obsidian's `moment`, local offset,
   matching the 2,312 values already in the vault. Property names are fixed.
 - One settings toggle, `timestampStampingEnabled`, default on.
 
 ## Mechanism
 
-**Trigger.** `EditorBindingManager.handleLiveEditorUpdate`
-(`src/sync/editorBinding.ts:1092`) already sees every CodeMirror update for a
-bound view. A user edit is `update.docChanged` where no transaction carries
-`ySyncAnnotation`; changes y-codemirror applied from Y carry it. The manager
-calls `stamper.noteUserEdit(path)`.
+**Trigger.** The stamper observes the Y.Text of every editor-bound note
+(`EditorBindingManager` calls `watch` when a binding is applied and `unwatch`
+on every release path, ref-counted per Y.Text so split panes share one
+entry). A user edit is a Y transaction whose origin is y-codemirror's
+`YSyncConfig` (`origin instanceof YSyncConfig`, injected from `main.ts`).
+Remote transactions (provider origin), local repair origins (strings), the
+undo manager's own origin, and the stamp itself never count. Undo and redo
+therefore do not bump `modified`.
 
 **Debounce.** 2 s after the last user edit on a path the stamper runs. If the
 path was recorded as born-empty and its Y text has no `created`, it stamps
@@ -57,9 +62,14 @@ does not track it. The disk mirror treats it as remote and writes it through
 edit already takes, and it means a note closed before the debounce fires still
 reaches disk instead of sitting in the CRDT as a future conflict.
 
-**Born-empty.** The vault `create` handler in `src/main.ts` records paths whose
-`stat.size` is 0 in a session-local set on the stamper. Renames move the entry
-(the rename handler already exists). Any other create, including Longform
+**Born-empty.** The vault `create` handler in `src/main.ts` records paths
+whose `stat.size` is 0 in a session-local set on the stamper. The vault
+`rename` handler forwards markdown renames so a note renamed before it is
+first opened keeps its status. When a Y.Text is watched, the entry remembers
+whether its path was born-empty and under which path; the flag and the set
+entry are consumed only when a stamp that writes `created` is actually
+applied, so closing a new note without typing, or a malformed block on the
+first stamp, does not lose it. Any other create, including Longform
 templates, imports and conflict artifacts, is not born-empty.
 
 **Off switch.** With the toggle off, `noteUserEdit` is a no-op and nothing is
@@ -83,6 +93,12 @@ Two devices stamping the same note inside one 2 s window both replace the same
 value range; Yjs keeps both inserts and the line reads as two concatenated
 timestamps. The next stamp on either device rewrites the whole value, so it
 self-heals. No lock.
+
+A note with no frontmatter gets its block inserted at offset 0 on the first
+stamp. A cursor sitting exactly at offset 0 at that moment maps to before the
+block, so text typed next lands above it and the following stamp would
+prepend a second block. Reaching this needs the caret at the very top of the
+note and a two-second pause before typing there.
 
 ## Testing
 
