@@ -204,4 +204,18 @@ s.section("Test 12: malformed frontmatter on the first stamp leaves born-empty s
 	s.check(text.includes("created:") && text.includes("modified:"), "closed block gets created and modified once well-formed");
 }
 
+s.section("Test 13: a two-edit stamp applies both edits to a real Y.Text in one transaction");
+{
+	const f = fixture();
+	f.typeAs(PROVIDER, "---\nmodified: 2022-01-02T00:00:00-08:00\n---\nbody");
+	f.stamper.markBornEmpty("Notes/a.md");
+	f.stamper.watch(f.ytext, "Notes/a.md");
+	f.typeAs(USER, "!");
+	f.firePending();
+	s.check(
+		f.ytext.toString() === "---\nmodified: 2026-09-16T21:00:00-07:00\ncreated: 2026-09-16T21:00:00-07:00\n---\nbody!",
+		"created appended at the fence, modified value replaced, in one transaction",
+	);
+}
+
 await s.done();
