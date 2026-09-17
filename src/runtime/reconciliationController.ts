@@ -611,6 +611,7 @@ export class ReconciliationController {
 						},
 					};
 				},
+				(path) => this.deps.isMarkdownPathSyncable(path),
 			);
 
 			let flushedCreates = 0;

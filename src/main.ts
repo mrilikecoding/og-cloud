@@ -1401,6 +1401,13 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 						opId,
 					);
 					this.log(`Delete: "${file.path}"`);
+					} else if (file.path.endsWith(".md") && this.vaultSync?.getFileId(file.path)) {
+						// Excluded markdown (a conflict artifact, a user-excluded path)
+						// that nonetheless holds a CRDT entry: honour the delete so the
+						// leak is tombstoned instead of resurrected at the next reconcile.
+						this.editorWorkspace?.onMarkdownDeleted(file.path);
+						this.vaultSync.handleDelete(file.path, this.settings.deviceName, this.newOpId());
+						this.log(`Delete (excluded path with CRDT entry): "${file.path}"`);
 					} else {
 						const blobSync = this.getBlobSync();
 						if (blobSync && this.isBlobPathSyncable(file.path) && !blobSync.isSuppressed(file.path)) {

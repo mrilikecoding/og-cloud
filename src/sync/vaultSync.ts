@@ -1211,8 +1211,17 @@ export class VaultSync {
 		 *    or any user-visible surface.
 		 */
 		mintAdmissionOpId?: (path: string) => { opId: string; emitDecision: () => void },
+		/**
+		 * Optional syncability predicate (the same one the vault event
+		 * handlers use). A CRDT path that fails it is a leak — a local-only
+		 * conflict artifact or user-excluded path that entered the CRDT by
+		 * some route — and is tombstoned here instead of being created or
+		 * updated on disk. Omitted: every CRDT path is eligible (legacy).
+		 */
+		isPathSyncable?: (path: string) => boolean,
 	): ReconcileResult {
 		const createdOnDisk: string[] = [];
+		const purgedExcluded: string[] = [];
 		const updatedOnDisk: string[] = [];
 		const seededToCrdt: string[] = [];
 		const untracked: string[] = [];
@@ -1220,6 +1229,24 @@ export class VaultSync {
 
 		this.ensurePathIndexes();
 		const crdtPaths = new Set<string>(this._pathIndex.keys());
+
+		// Excluded paths must never be materialised from the CRDT. Tombstone
+		// any that leaked in, and drop them from this run's path set.
+		if (isPathSyncable) {
+			for (const path of crdtPaths) {
+				if (isPathSyncable(path)) continue;
+				this.handleDelete(path, device);
+				purgedExcluded.push(path);
+				crdtPaths.delete(path);
+			}
+			if (purgedExcluded.length > 0) {
+				this.log(`reconcile: purged ${purgedExcluded.length} excluded path(s) from the CRDT`);
+				this.trace?.("sync", "reconcile-purged-excluded", {
+					count: purgedExcluded.length,
+					sample: purgedExcluded.slice(0, 20),
+				});
+			}
+		}
 
 		// CRDT files not on disk → create on disk
 		// IMPORTANT: use diskPresentPaths (all known disk paths), not
@@ -1317,7 +1344,7 @@ export class VaultSync {
 			`${tombstonedDiskConflicts.length} tombstoned-disk conflicts`,
 		);
 
-		return { mode, createdOnDisk, updatedOnDisk, seededToCrdt, untracked, tombstonedDiskConflicts, skipped };
+		return { mode, createdOnDisk, updatedOnDisk, seededToCrdt, untracked, tombstonedDiskConflicts, purgedExcluded, skipped };
 	}
 
 	// -------------------------------------------------------------------
@@ -2295,6 +2322,8 @@ export interface ReconcileResult {
 	 * User should resolve manually or via explicit create action.
 	 */
 	tombstonedDiskConflicts: TombstonedDiskConflict[];
+	/** Excluded paths that held a CRDT entry and were tombstoned this run. */
+	purgedExcluded: string[];
 	skipped: number;
 }
 
