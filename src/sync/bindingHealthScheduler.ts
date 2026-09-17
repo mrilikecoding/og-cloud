@@ -36,16 +36,27 @@ interface Episode {
 
 export class BindingHealthScheduler {
 	private readonly episodes = new Map<string, Episode>();
+	/** Leaves whose current binding has exhausted its retries; cleared on unbind. */
+	private readonly gaveUp = new Set<string>();
 
 	constructor(private readonly deps: SchedulerDeps) {}
 
-	/** Run a health check for a leaf on behalf of `source`. */
+	/**
+	 * Run a health check for a leaf on behalf of `source`.
+	 *
+	 * Synchronous by design: `inspect` and `repair` run to completion inside
+	 * this call, so a repair that re-enters `check` (the manager's repair path
+	 * schedules a post-bind check) sees a consistent episode. If either
+	 * callback ever becomes async, the stale-episode guard in `schedule`
+	 * needs re-verifying.
+	 */
 	check(leafId: string, source: string): HealthAction["kind"] {
 		const report = this.deps.inspect(leafId);
 		if (!report) {
 			this.clear(leafId);
 			return "noop";
 		}
+		if (this.gaveUp.has(leafId) && isOnlyMissingFacet(report.issues)) return "noop";
 		const episode = this.episodes.get(leafId);
 		const action = decideHealthAction({
 			source,
@@ -87,13 +98,15 @@ export class BindingHealthScheduler {
 			}
 			case "give-up":
 				this.clear(leafId);
+				this.gaveUp.add(leafId);
 				this.deps.onGiveUp(leafId, report.issues);
 				return "give-up";
 		}
 	}
 
-	/** Cancel any pending retry and forget the episode. */
+	/** Cancel any pending retry and forget the episode and any give-up. */
 	clear(leafId: string): void {
+		this.gaveUp.delete(leafId);
 		const episode = this.episodes.get(leafId);
 		if (!episode) return;
 		if (episode.timer !== null) this.deps.clearTimeout(episode.timer);
@@ -102,6 +115,7 @@ export class BindingHealthScheduler {
 
 	clearAll(): void {
 		for (const leafId of [...this.episodes.keys()]) this.clear(leafId);
+		this.gaveUp.clear();
 	}
 
 	hasPending(leafId: string): boolean {
@@ -122,3 +136,6 @@ export class BindingHealthScheduler {
 	}
 }
 
+function isOnlyMissingFacet(issues: readonly string[]): boolean {
+	return issues.length === 1 && issues[0] === "missing-sync-facet";
+}
