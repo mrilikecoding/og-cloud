@@ -110,6 +110,8 @@ interface WatchEntry {
 	handler: (event: Y.YTextEvent, txn: Y.Transaction) => void;
 	timer: unknown | null;
 	bornEmpty: boolean;
+	/** Path this entry's born-empty status was read under; used to consume it from bornEmptyPaths even if `path` is later renamed. */
+	bornEmptyPath: string;
 }
 
 export class TimestampStamper {
@@ -136,7 +138,8 @@ export class TimestampStamper {
 			refs: 1,
 			handler: (_event, txn) => this.onTransaction(ytext, txn),
 			timer: null,
-			bornEmpty: this.bornEmptyPaths.delete(path),
+			bornEmpty: this.bornEmptyPaths.has(path),
+			bornEmptyPath: path,
 		};
 		ytext.observe(entry.handler);
 		this.entries.set(ytext, entry);
@@ -187,6 +190,7 @@ export class TimestampStamper {
 		const withCreated = entry.bornEmpty;
 		const edits = computeTimestampEdits(ytext.toString(), this.deps.now(), { withCreated });
 		entry.bornEmpty = false;
+		if (withCreated) this.bornEmptyPaths.delete(entry.bornEmptyPath);
 		if (edits.length === 0) return;
 		doc.transact(() => {
 			for (const edit of edits) {

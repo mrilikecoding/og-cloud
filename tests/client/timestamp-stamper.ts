@@ -165,4 +165,29 @@ s.section("Test 10: a stamp emits a trace event with the path");
 	s.check(t !== undefined && t.data?.path === "Notes/a.md", "traced with path");
 }
 
+s.section("Test 11: born-empty status survives an unwatch/watch cycle with no edits in between");
+{
+	const f = fixture();
+	f.stamper.markBornEmpty("Untitled.md");
+	f.stamper.watch(f.ytext, "Untitled.md");
+	f.stamper.unwatch(f.ytext); // closed before typing anything: no timer, nothing flushed
+	f.stamper.watch(f.ytext, "Untitled.md"); // reopened
+	f.typeAs(USER, "first");
+	f.firePending();
+	s.check(
+		f.ytext.toString().includes("created:"),
+		"created written on reopen even though the first watch never stamped",
+	);
+
+	f.stamper.unwatch(f.ytext);
+	f.stamper.watch(f.ytext, "Untitled.md");
+	f.setClock("2026-09-16T21:05:00-07:00");
+	f.typeAs(USER, " second");
+	f.firePending();
+	s.check(
+		f.ytext.toString() === "---\ncreated: 2026-09-16T21:00:00-07:00\nmodified: 2026-09-16T21:05:00-07:00\n---\nfirst second",
+		"created flag consumed by the first stamp, not re-stamped on the later one",
+	);
+}
+
 await s.done();
