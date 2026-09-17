@@ -1226,6 +1226,10 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				// Skip entirely if both are excluded.
 				if (oldCategory.kind === "excluded" && newCategory.kind === "excluded") return;
 
+				if (oldCategory.kind === "markdown" || newCategory.kind === "markdown") {
+					this.timestampStamper?.noteRename(oldPath, file.path);
+				}
+
 				const renameOpId = this.newOpId();
 				// DiskMirror marks a passive receiver's filesystem rename so it is
 				// observed and traced without re-enqueuing an already-applied CRDT rename.

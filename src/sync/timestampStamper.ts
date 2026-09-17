@@ -159,6 +159,23 @@ export class TimestampStamper {
 		}
 	}
 
+	/**
+	 * Follow a vault rename. Obsidian's file-explorer new-note flow can create
+	 * a path and let the user rename it before the editor (and thus `watch`)
+	 * ever sees it, so born-empty tracking has to move with the path.
+	 */
+	noteRename(oldPath: string, newPath: string): void {
+		if (this.disposed) return;
+		if (this.bornEmptyPaths.has(oldPath)) {
+			this.bornEmptyPaths.delete(oldPath);
+			this.bornEmptyPaths.add(newPath);
+		}
+		for (const entry of this.entries.values()) {
+			if (entry.path === oldPath) entry.path = newPath;
+			if (entry.bornEmptyPath === oldPath) entry.bornEmptyPath = newPath;
+		}
+	}
+
 	dispose(): void {
 		this.disposed = true;
 		for (const [ytext, entry] of this.entries) {

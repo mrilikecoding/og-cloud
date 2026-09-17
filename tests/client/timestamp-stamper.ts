@@ -218,4 +218,28 @@ s.section("Test 13: a two-edit stamp applies both edits to a real Y.Text in one 
 	);
 }
 
+s.section("Test 14: noteRename before watch carries born-empty status to the new path");
+{
+	const f = fixture();
+	f.stamper.markBornEmpty("Untitled.md");
+	f.stamper.noteRename("Untitled.md", "Notes/A.md");
+	f.stamper.watch(f.ytext, "Notes/A.md");
+	f.typeAs(USER, "first");
+	f.firePending();
+	s.check(f.ytext.toString().includes("created:"), "created written after rename-before-open");
+}
+
+s.section("Test 15: noteRename while watched updates the entry's path and preserves born-empty status");
+{
+	const f = fixture();
+	f.stamper.markBornEmpty("Untitled.md");
+	f.stamper.watch(f.ytext, "Untitled.md");
+	f.stamper.noteRename("Untitled.md", "Notes/B.md");
+	f.typeAs(USER, "first");
+	f.firePending();
+	s.check(f.ytext.toString().includes("created:"), "created written after rename-while-watched");
+	const t = f.traces.find((x) => x.event === "timestamp-stamped");
+	s.check(t !== undefined && t.data?.path === "Notes/B.md", "timestamp-stamped trace reports the new path");
+}
+
 await s.done();
