@@ -1080,9 +1080,6 @@ export class EditorBindingManager {
 		const file = view.file;
 		const liveCm = this.getCmView(view);
 		const collab = this.getCollabDebugInfoForView(view);
-		const withinSettleWindow =
-			Date.now() - binding.lastBoundAtMs < binding.settleWindowMs;
-
 		if (!file) {
 			issues.push("missing-file");
 		} else if (binding.path !== file.path) {
@@ -1099,11 +1096,10 @@ export class EditorBindingManager {
 			issues.push("missing-collab-info");
 		} else {
 			if (!collab.hasSyncFacet) {
-				if (withinSettleWindow) {
-					deferredIssues.push("missing-sync-facet");
-				} else {
-					issues.push("missing-sync-facet");
-				}
+				// Never deferred: the retry scheduler repairs on its own short
+				// cadence from the first check, so a settle window would only
+				// lengthen the gap in which keystrokes miss the CRDT.
+				issues.push("missing-sync-facet");
 			}
 			if (collab.awarenessMatchesProvider === false) {
 				issues.push("awareness-mismatch");

@@ -305,4 +305,29 @@ s.section("Test 9: active-view checks use the public Workspace API");
 	s.check(activeViewCalls === 2, "both active-view decisions use getActiveViewOfType");
 	s.check(!bindingSource.includes(".activeLeaf"), "deprecated activeLeaf is absent");
 }
+s.section("Test 10: a missing sync facet is a hard issue from the first check (no settle-window deferral)");
+{
+	// The 2026-09-17 conflict bug: for the first settleWindowMs after a bind
+	// a missing facet was reported as a deferred issue, the health verdict
+	// was "settling", and no retry was scheduled until the post-bind timer at
+	// settleWindow + grace (~850 ms). Keystrokes in that window reached disk
+	// but not the CRDT. With the retry scheduler in place the first repair
+	// must be able to run on its own cadence immediately after bind, so the
+	// facet check may never route to deferredIssues.
+	const section = sliceBetween(
+		bindingSource,
+		"if (!collab.hasSyncFacet) {",
+		"if (collab.awarenessMatchesProvider === false)",
+	);
+	s.check(section !== null, "facet check section found");
+	s.check(
+		!includesIn(section, "deferredIssues.push(\"missing-sync-facet\")"),
+		"missing-sync-facet is never deferred",
+	);
+	s.check(
+		includesIn(section, "issues.push(\"missing-sync-facet\")"),
+		"missing-sync-facet is reported as a hard issue",
+	);
+}
+
 await s.done();
