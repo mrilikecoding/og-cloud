@@ -31,6 +31,8 @@ export interface VaultSyncSettings {
 	debug: boolean;
 	/** Pause propagation of suspicious YAML frontmatter transitions. */
 	frontmatterGuardEnabled: boolean;
+	/** Maintain `created` / `modified` frontmatter as CRDT edits after local typing. */
+	timestampStampingEnabled: boolean;
 	/** Comma-separated path prefixes to exclude from sync. */
 	excludePatterns: string;
 	/** Maximum file size in KB to sync via CRDT. Files larger are skipped. */
@@ -67,6 +69,7 @@ export const DEFAULT_SETTINGS: VaultSyncSettings = {
 	deviceName: "",
 	debug: false,
 	frontmatterGuardEnabled: true,
+	timestampStampingEnabled: true,
 	excludePatterns: "",
 	maxFileSizeKB: 2048,
 	externalEditPolicy: "always",

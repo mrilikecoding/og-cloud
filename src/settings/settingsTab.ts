@@ -32,6 +32,7 @@ type DeclarativeSettingKey =
 	| "updateRepoBranch"
 	| "externalEditPolicy"
 	| "frontmatterGuardEnabled"
+	| "timestampStampingEnabled"
 	| "debug";
 
 interface SettingsUpdateState {
@@ -377,6 +378,11 @@ export class VaultSyncSettingTab extends PluginSettingTab {
 						control: { type: "toggle", key: "frontmatterGuardEnabled" },
 					},
 					{
+						name: "Maintain created and modified timestamps",
+						desc: "After you edit a note, update its modified property inside sync so every device agrees. New notes get created too.",
+						control: { type: "toggle", key: "timestampStampingEnabled" },
+					},
+					{
 						name: "Debug mode",
 						desc: "Record detailed sync events for an exportable diagnostics trace. Leave off for everyday use.",
 						control: { type: "toggle", key: "debug" },
@@ -409,6 +415,7 @@ export class VaultSyncSettingTab extends PluginSettingTab {
 			case "updateRepoBranch": return this.host.settings.updateRepoBranch;
 			case "externalEditPolicy": return this.host.settings.externalEditPolicy;
 			case "frontmatterGuardEnabled": return this.host.settings.frontmatterGuardEnabled;
+			case "timestampStampingEnabled": return this.host.settings.timestampStampingEnabled;
 			case "debug": return this.host.settings.debug;
 			default: throw new Error(`Unknown Yaos setting: ${key}`);
 		}
@@ -492,6 +499,11 @@ export class VaultSyncSettingTab extends PluginSettingTab {
 				await this.host.updateSettings((settings) => {
 					settings.frontmatterGuardEnabled = expectBooleanValue(key, value);
 				}, "settings:frontmatter-guard");
+				return;
+			case "timestampStampingEnabled":
+				await this.host.updateSettings((settings) => {
+					settings.timestampStampingEnabled = expectBooleanValue(key, value);
+				}, "settings:timestamp-stamping");
 				return;
 			case "debug":
 				await this.host.updateSettings((settings) => {

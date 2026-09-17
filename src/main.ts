@@ -1,4 +1,5 @@
-import { MarkdownView, Notice, Plugin, TFile, arrayBufferToHex } from "obsidian";
+import { MarkdownView, Notice, Plugin, TFile, arrayBufferToHex, moment } from "obsidian";
+import { YSyncConfig } from "y-codemirror.next";
 import {
 	DEFAULT_SETTINGS,
 	VaultSyncSettingTab,
@@ -10,6 +11,7 @@ import { LEGACY_PLUGIN_ID, pluginDir } from "./pluginId";
 import { VaultSync, type ReconcileMode } from "./sync/vaultSync";
 import { SCHEMA_VERSION } from "./sync/vaultSync";
 import { EditorBindingManager } from "./sync/editorBinding";
+import { TimestampStamper } from "./sync/timestampStamper";
 import { DiskMirror } from "./sync/diskMirror";
 import { type BlobQueueSnapshot, type BlobSyncManager } from "./sync/blobSync";
 import {
@@ -133,6 +135,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 	private vaultSync: VaultSync | null = null;
 	private connectionController: ConnectionController | null = null;
 	private editorBindings: EditorBindingManager | null = null;
+	private timestampStamper: TimestampStamper | null = null;
 	private diskMirror: DiskMirror | null = null;
 	private attachmentOrchestrator: AttachmentOrchestrator | null = null;
 	private editorWorkspace: EditorWorkspaceOrchestrator | null = null;
@@ -774,6 +777,16 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				(event) => this.recordFlightPathEvent(event),
 				bindingPropagationGate,
 			);
+			this.timestampStamper = new TimestampStamper({
+				isUserOrigin: (origin) => origin instanceof YSyncConfig,
+				now: () => moment().format("YYYY-MM-DDTHH:mm:ssZ"),
+				isEnabled: () => this.settings.timestampStampingEnabled,
+				setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+				clearTimeout: (handle) => window.clearTimeout(handle as number),
+				log: (message) => this.log(message),
+				trace: (source, msg, details) => this.trace(source, msg, details),
+			});
+			this.editorBindings.setTimestampStamper(this.timestampStamper);
 
 			// 3. Global CM6 extension.
 			//
@@ -1399,6 +1412,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				if (!(file instanceof TFile)) return;
 
 				if (this.isMarkdownPathSyncable(file.path)) {
+					if ((file.stat?.size ?? 0) === 0) this.timestampStamper?.markBornEmpty(file.path);
 					const createOpId = this.newOpId();
 					this.traceSink.recordPath({
 						kind: "disk.create.observed",
@@ -1473,6 +1487,10 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				run: () => this.saveDiskIndex(),
 			},
 			{
+				name: "timestamp-stamper",
+				run: () => this.timestampStamper?.dispose(),
+			},
+			{
 				name: "editor-bindings",
 				run: () => this.editorBindings?.unbindAll(),
 			},
@@ -1511,6 +1529,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 					this.vaultSync = null;
 					this.connectionController = null;
 					this.editorBindings = null;
+					this.timestampStamper = null;
 					this.diskMirror = null;
 					this.awaitingFirstProviderSyncAfterStartup = false;
 					this.editorWorkspace?.reset();

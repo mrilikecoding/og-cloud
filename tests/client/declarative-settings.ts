@@ -112,6 +112,7 @@ s.section("Declarative settings inventory");
 		"updateRepoBranch",
 		"externalEditPolicy",
 		"frontmatterGuardEnabled",
+		"timestampStampingEnabled",
 		"debug",
 	]) {
 		s.check(controlKeys.has(key), `${key} has a declarative control`);
