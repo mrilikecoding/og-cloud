@@ -416,6 +416,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 				this.reconciliationController.maybeImportDeferredClosedOnlyPath(path, reason),
 			scheduleTraceStateSnapshot: (reason) => this.scheduleTraceStateSnapshot(reason),
 			log: (message) => this.log(message),
+			isMarkdownPathSyncable: (path) => this.isMarkdownPathSyncable(path),
 		});
 		this.snapshotService = new SnapshotService({
 			app: this.app,

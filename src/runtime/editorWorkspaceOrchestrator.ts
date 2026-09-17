@@ -11,6 +11,12 @@ interface EditorWorkspaceOrchestratorDeps {
 	maybeImportDeferredClosedOnlyPath(path: string, reason: string): void;
 	scheduleTraceStateSnapshot(reason: string): void;
 	log(message: string): void;
+	/**
+	 * Same predicate the vault event handlers use. Binding an excluded path
+	 * (a local-only conflict artifact, a user-excluded folder) would call
+	 * ensureFile and admit it to the CRDT through the editor.
+	 */
+	isMarkdownPathSyncable(path: string): boolean;
 }
 
 export class EditorWorkspaceOrchestrator {
@@ -182,9 +188,14 @@ export class EditorWorkspaceOrchestrator {
 	}
 
 	private bindView(view: MarkdownView): void {
+		const path = view.file?.path;
+		if (path !== undefined && !this.deps.isMarkdownPathSyncable(path)) {
+			this.deps.log(`bind: refusing excluded path "${path}" (local-only, not synced)`);
+			return;
+		}
 		this.deps.getEditorBindings()?.bind(view, this.deps.getSettings().deviceName);
-		if (view.file) {
-			this.trackOpenFile(view.file.path);
+		if (path !== undefined) {
+			this.trackOpenFile(path);
 		}
 	}
 

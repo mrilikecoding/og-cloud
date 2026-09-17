@@ -177,6 +177,7 @@ const workspace = new EditorWorkspaceOrchestrator({
 	},
 	scheduleTraceStateSnapshot: () => {},
 	log: () => {},
+	isMarkdownPathSyncable: () => true,
 });
 
 // Track the live view using the orchestrator's production onFileOpen path.
