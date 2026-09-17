@@ -9,6 +9,7 @@ import type { TraceRecord } from "../observability/traceContext";
 import type { ProductFlightPathEventInput } from "../observability/traceSink";
 import { PRODUCT_EVENT_KIND } from "../observability/productEventKinds";
 import { ORIGIN_EDITOR_HEALTH_HEAL } from "./origins";
+import type { TimestampStamper } from "./timestampStamper";
 
 /**
  * Manages per-editor CM6 bindings via yCollab.
@@ -45,6 +46,7 @@ interface EditorBinding {
 	view: MarkdownView;
 	path: string;
 	undoManager: Y.UndoManager;
+	ytext: Y.Text;
 	cm: EditorView;
 	cmId: string;
 	fileId?: string;
@@ -144,6 +146,12 @@ export class EditorBindingManager {
 	 * unclaimable" (ambiguous container).
 	 */
 	private lastCmResolveFailure: CmResolveFailure | null = null;
+
+	private timestampStamper: TimestampStamper | null = null;
+
+	setTimestampStamper(stamper: TimestampStamper | null): void {
+		this.timestampStamper = stamper;
+	}
 
 	private readonly debug: boolean;
 
@@ -433,6 +441,7 @@ export class EditorBindingManager {
 		this.clearScheduledHealthCheck(leafId);
 		this.clearCmResolveRetry(leafId);
 		this.healthWorkInFlight.delete(leafId);
+		this.timestampStamper?.unwatch(binding.ytext);
 		binding.undoManager.destroy();
 		this.bindings.delete(leafId);
 		this.cmToLeafId.delete(binding.cm);
@@ -459,6 +468,7 @@ export class EditorBindingManager {
 			this.clearCmResolveRetry(leafId);
 			this.healthWorkInFlight.delete(leafId);
 			this.cmToLeafId.delete(binding.cm);
+			this.timestampStamper?.unwatch(binding.ytext);
 			binding.undoManager.destroy();
 			this.log(`unbindAll: destroyed binding for "${binding.path}"`);
 		}
@@ -484,6 +494,7 @@ export class EditorBindingManager {
 					// View may already be destroyed
 				}
 				this.cmToLeafId.delete(binding.cm);
+				this.timestampStamper?.unwatch(binding.ytext);
 				this.bindings.delete(leafId);
 				this.log(`unbindByPath: unbound "${path}" (leaf=${leafId})`);
 				// Don't break — a path could theoretically be open in multiple leaves
@@ -529,6 +540,7 @@ export class EditorBindingManager {
 			this.clearScheduledHealthCheck(leafId);
 			this.clearCmResolveRetry(leafId);
 			this.healthWorkInFlight.delete(leafId);
+			this.timestampStamper?.unwatch(binding.ytext);
 			binding.undoManager.destroy();
 			this.cmToLeafId.delete(binding.cm);
 			this.bindings.delete(leafId);
@@ -1314,6 +1326,7 @@ export class EditorBindingManager {
 		}
 
 		existing?.undoManager.destroy();
+		if (existing) this.timestampStamper?.unwatch(existing.ytext);
 		if (existing) {
 			this.cmToLeafId.delete(existing.cm);
 		}
@@ -1329,6 +1342,7 @@ export class EditorBindingManager {
 			view,
 			path: filePath,
 			undoManager,
+			ytext,
 			cm,
 			cmId,
 			fileId,
@@ -1338,6 +1352,7 @@ export class EditorBindingManager {
 			settleWindowMs,
 		});
 		this.cmToLeafId.set(cm, leafId);
+		this.timestampStamper?.watch(ytext, filePath);
 		this.schedulePostBindHealthCheck(leafId, settleWindowMs);
 		this.trace?.("editor", "binding-applied", {
 			action,
