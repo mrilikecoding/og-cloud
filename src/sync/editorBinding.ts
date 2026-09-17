@@ -9,6 +9,7 @@ import type { TraceRecord } from "../observability/traceContext";
 import type { ProductFlightPathEventInput } from "../observability/traceSink";
 import { PRODUCT_EVENT_KIND } from "../observability/productEventKinds";
 import { ORIGIN_EDITOR_HEALTH_HEAL } from "./origins";
+import { BindingHealthScheduler } from "./bindingHealthScheduler";
 import type { TimestampStamper } from "./timestampStamper";
 
 /**
@@ -29,7 +30,6 @@ const BASE_BINDING_SETTLE_WINDOW_MS = 750;
 const FAST_SWITCH_BINDING_SETTLE_WINDOW_MS = 1600;
 const FAST_SWITCH_WINDOW_MS = 2000;
 const POST_BIND_HEALTH_GRACE_MS = 100;
-const LIVE_UPDATE_HEALTH_RETRY_DELAY_MS = 120;
 const CM_RESOLVE_RETRY_DELAY_MS = 100;
 const CM_RESOLVE_MAX_RETRIES = 8;
 
@@ -133,8 +133,28 @@ export class EditorBindingManager {
 	private cmIds = new WeakMap<EditorView, string>();
 	private cmToLeafId = new WeakMap<EditorView, string>();
 	private cmCounter = 0;
-	private pendingHealthChecks = new Map<string, number>();
+	private readonly healthScheduler = new BindingHealthScheduler({
+		setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+		clearTimeout: (handle) => window.clearTimeout(handle as number),
+		inspect: (leafId) => {
+			const binding = this.bindings.get(leafId);
+			if (!binding) return null;
+			const health = this.inspectBindingHealth(binding.view, binding);
+			return { issues: health.issues, deferredIssues: health.deferredIssues };
+		},
+		repair: (leafId, source, issues) => this.repairBindingHealth(leafId, source, issues),
+		onGiveUp: (leafId, issues) => {
+			const binding = this.bindings.get(leafId);
+			this.log(
+				`binding-health-gave-up: "${binding?.path ?? leafId}" ` +
+				`(leaf=${leafId}, issues=${issues.join(",")})`,
+			);
+			this.trace?.("editor", "binding-health-gave-up", { leafId, path: binding?.path ?? null, issues: [...issues] });
+		},
+		trace: (event, leafId, data) => this.trace?.("editor", event, { leafId, ...data }),
+	});
 	private healthWorkInFlight = new Set<string>();
+	private postBindTimers = new Map<string, number>();
 	private lastDeviceName = "unknown";
 	private cmDegradedWarned = false;
 	private cmResolveAttempts = new Map<string, number>();
@@ -1118,28 +1138,22 @@ export class EditorBindingManager {
 		if (this.healthWorkInFlight.has(leafId)) return;
 		if (this.bindings.get(leafId) !== binding) return;
 		if (this.bindingPropagationGate?.isPaused(binding.path)) return;
+		this.healthScheduler.check(leafId, source);
+	}
 
-		const health = this.inspectBindingHealth(binding.view, binding);
-		if (health.healthy || health.settling) return;
-		if (source === "live-update") {
-			this.scheduleHealthCheck(leafId, LIVE_UPDATE_HEALTH_RETRY_DELAY_MS, "live-update-deferred");
-			return;
-		}
-		const onlyMissingSyncFacet =
-			health.issues.length === 1 && health.issues[0] === "missing-sync-facet";
-		if (onlyMissingSyncFacet && source !== "retry-health-check") {
-			const traceDetails = this.buildHealthTraceDetails(leafId, binding, source, health.issues);
-			this.trace?.("editor", "binding-health-missing-sync-facet-deferred", {
-				...traceDetails,
-				action: "deferred",
-			});
-			const retryDelayMs = binding.settleWindowMs + POST_BIND_HEALTH_GRACE_MS;
-			this.scheduleHealthCheck(leafId, retryDelayMs, "retry-health-check");
-			return;
-		}
-
-		const issues = health.issues.join(",") || "unknown";
-		const traceDetails = this.buildHealthTraceDetails(leafId, binding, source, health.issues);
+	/**
+	 * Scheduler callback: run one repair attempt for a binding that failed its
+	 * health check. Returns false when the binding no longer exists.
+	 */
+	private repairBindingHealth(
+		leafId: string,
+		source: string,
+		issueList: readonly string[],
+	): boolean {
+		const binding = this.bindings.get(leafId);
+		if (!binding) return false;
+		const issues = issueList.join(",") || "unknown";
+		const traceDetails = this.buildHealthTraceDetails(leafId, binding, source, [...issueList]);
 		this.healthWorkInFlight.add(leafId);
 		this.trace?.("editor", "binding-health-failed", traceDetails);
 		this.log(
@@ -1166,17 +1180,13 @@ export class EditorBindingManager {
 				tombstoned
 				|| (!!postHealth && (postHealth.healthy || postHealth.settling));
 			if (!restored) {
-				this.trace?.("editor", "binding-health-retry-scheduled", {
+				// The scheduler re-checks on its own cadence; just record the state.
+				this.trace?.("editor", "binding-health-repair-incomplete", {
 					...traceDetails,
-					action: "retry-scheduled",
 					post: this.getCollabDebugInfoForView(postView),
 					postIssues: postHealth?.issues ?? ["missing-binding"],
 				});
-				const retryDelayMs =
-					(latestBinding?.settleWindowMs ?? BASE_BINDING_SETTLE_WINDOW_MS)
-					+ POST_BIND_HEALTH_GRACE_MS;
-				this.scheduleHealthCheck(leafId, retryDelayMs, "retry-health-check");
-				return;
+				return latestBinding !== undefined;
 			}
 			this.trace?.("editor", "binding-health-restored", {
 				...traceDetails,
@@ -1195,6 +1205,7 @@ export class EditorBindingManager {
 				postIssues: postHealth?.issues ?? [],
 				post: this.getCollabDebugInfoForView(postView),
 			});
+			return latestBinding !== undefined;
 		} finally {
 			this.healthWorkInFlight.delete(leafId);
 		}
@@ -1242,35 +1253,29 @@ export class EditorBindingManager {
 		this.cmResolveAttempts.delete(leafId);
 	}
 
-	private scheduleHealthCheck(
-		leafId: string,
-		delayMs: number,
-		source: string,
-	): void {
-		this.clearScheduledHealthCheck(leafId);
+	private schedulePostBindHealthCheck(leafId: string, settleWindowMs: number): void {
+		// One check after the settle window; from there the scheduler owns retries.
+		this.clearPostBindTimer(leafId);
 		const timer = window.setTimeout(() => {
-			this.pendingHealthChecks.delete(leafId);
+			this.postBindTimers.delete(leafId);
 			const binding = this.bindings.get(leafId);
 			if (!binding) return;
-			this.maybeHealBinding(leafId, binding, source);
-		}, delayMs);
-		this.pendingHealthChecks.set(leafId, timer);
+			this.maybeHealBinding(leafId, binding, "post-bind-health");
+		}, settleWindowMs + POST_BIND_HEALTH_GRACE_MS);
+		this.postBindTimers.set(leafId, timer);
 	}
 
-	private schedulePostBindHealthCheck(leafId: string, settleWindowMs: number): void {
-		this.scheduleHealthCheck(
-			leafId,
-			settleWindowMs + POST_BIND_HEALTH_GRACE_MS,
-			"post-bind-health",
-		);
+	private clearPostBindTimer(leafId: string): void {
+		const timer = this.postBindTimers.get(leafId);
+		if (timer !== undefined) {
+			window.clearTimeout(timer);
+			this.postBindTimers.delete(leafId);
+		}
 	}
 
 	private clearScheduledHealthCheck(leafId: string): void {
-		const timer = this.pendingHealthChecks.get(leafId);
-		if (timer) {
-			window.clearTimeout(timer);
-			this.pendingHealthChecks.delete(leafId);
-		}
+		this.clearPostBindTimer(leafId);
+		this.healthScheduler.clear(leafId);
 	}
 
 	private applyBinding(options: {
