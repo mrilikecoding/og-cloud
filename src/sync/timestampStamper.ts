@@ -108,7 +108,7 @@ interface WatchEntry {
 	path: string;
 	refs: number;
 	handler: (event: Y.YTextEvent, txn: Y.Transaction) => void;
-	timer: unknown | null;
+	timer: unknown;
 	bornEmpty: boolean;
 	/** Path this entry's born-empty status was read under; used to consume it from bornEmptyPaths even if `path` is later renamed. */
 	bornEmptyPath: string;
@@ -188,7 +188,7 @@ export class TimestampStamper {
 		const doc = ytext.doc;
 		if (!doc) return;
 		const withCreated = entry.bornEmpty;
-		const edits = computeTimestampEdits(ytext.toString(), this.deps.now(), { withCreated });
+		const edits = computeTimestampEdits(ytext.toJSON(), this.deps.now(), { withCreated });
 		if (edits.length === 0) return;
 		entry.bornEmpty = false;
 		if (withCreated) this.bornEmptyPaths.delete(entry.bornEmptyPath);
