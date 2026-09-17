@@ -933,6 +933,20 @@ export class DiskMirror {
 		}
 	}
 
+	/**
+	 * Remove an excluded markdown file whose path the CRDT remembers as
+	 * deleted (see src/sync/tombstonedExcluded.ts). Goes through the same
+	 * trash + prune path as a remote delete. Returns false if the file is
+	 * not present.
+	 */
+	async removeTombstonedExcluded(path: string): Promise<boolean> {
+		const file = this.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) return false;
+		await this.deleteLocalReplica(file);
+		this.log(`removeTombstonedExcluded: trashed "${path}"`);
+		return true;
+	}
+
 	private async deleteLocalReplica(file: TFile): Promise<"trash"> {
 		await this.app.fileManager.trashFile(file);
 		// A folder deleted elsewhere arrives here as its files, one by one;

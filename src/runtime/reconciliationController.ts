@@ -31,6 +31,7 @@ import {
 	type DiffPostconditionResult,
 } from "../sync/diff";
 import { decideExternalEditImport } from "../sync/externalEditPolicy";
+import { planTombstonedExcludedRemovals } from "../sync/tombstonedExcluded";
 import { yTextToString } from "../utils/format";
 import {
 	ORIGIN_DISK_SYNC,
@@ -645,6 +646,35 @@ export class ReconciliationController {
 
 			// Emit reconcile.file.decision for tombstoned and untracked paths
 			// (diagnostic only — no side effects, safe outside safetyBrake guard).
+			// Excluded markdown on disk whose path is tombstoned in the CRDT
+			// (a leaked conflict artifact purged elsewhere): remove it here,
+			// otherwise it lingers unsynced and undeletable on this device.
+			const tombstonedExcluded = planTombstonedExcludedRemovals({
+				diskMarkdownPaths: allMdFiles.map((f) => f.path),
+				isPathSyncable: (path) => this.deps.isMarkdownPathSyncable(path),
+				isMarkdownTombstoned: (path) => vaultSync.isMarkdownTombstoned(path),
+			});
+			let removedTombstonedExcluded = 0;
+			for (const path of tombstonedExcluded) {
+				try {
+					if (await this.deps.getDiskMirror()?.removeTombstonedExcluded(path)) {
+						removedTombstonedExcluded++;
+					}
+				} catch (err) {
+					console.error(`[yaos] failed to remove tombstoned excluded "${path}":`, err);
+				}
+			}
+			if (tombstonedExcluded.length > 0) {
+				this.deps.log(
+					`reconcile: removed ${removedTombstonedExcluded}/${tombstonedExcluded.length} tombstoned excluded file(s) from disk`,
+				);
+				this.deps.trace("reconcile", "reconcile-removed-tombstoned-excluded", {
+					planned: tombstonedExcluded.length,
+					removed: removedTombstonedExcluded,
+					sample: tombstonedExcluded.slice(0, 20),
+				});
+			}
+
 			for (const conflict of result.tombstonedDiskConflicts ?? []) {
 				this.deps.recordFlightPathEvent?.({
 					priority: "important",
