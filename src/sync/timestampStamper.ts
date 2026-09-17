@@ -189,9 +189,9 @@ export class TimestampStamper {
 		if (!doc) return;
 		const withCreated = entry.bornEmpty;
 		const edits = computeTimestampEdits(ytext.toString(), this.deps.now(), { withCreated });
+		if (edits.length === 0) return;
 		entry.bornEmpty = false;
 		if (withCreated) this.bornEmptyPaths.delete(entry.bornEmptyPath);
-		if (edits.length === 0) return;
 		doc.transact(() => {
 			for (const edit of edits) {
 				if (edit.to > edit.from) ytext.delete(edit.from, edit.to - edit.from);

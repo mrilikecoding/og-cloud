@@ -190,4 +190,18 @@ s.section("Test 11: born-empty status survives an unwatch/watch cycle with no ed
 	);
 }
 
+s.section("Test 12: malformed frontmatter on the first stamp leaves born-empty status intact");
+{
+	const f = fixture();
+	f.stamper.markBornEmpty("Untitled.md");
+	f.stamper.watch(f.ytext, "Untitled.md");
+	f.typeAs(USER, "---\ntitle: x\n");
+	f.firePending();
+	s.check(f.ytext.toString() === "---\ntitle: x\n", "malformed frontmatter: no stamp");
+	f.typeAs(USER, "---\nbody");
+	f.firePending();
+	const text = f.ytext.toString();
+	s.check(text.includes("created:") && text.includes("modified:"), "closed block gets created and modified once well-formed");
+}
+
 await s.done();
