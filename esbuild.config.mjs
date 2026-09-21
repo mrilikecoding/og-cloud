@@ -1,6 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from 'node:module';
+import { execSync } from "node:child_process";
 
 const banner =
 `/*
@@ -11,6 +12,24 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = (process.argv[2] === "production");
 const qaProduct = (process.argv[2] === "qa-product");
+
+// Build provenance for src/buildInfo.ts. manifest.json keeps upstream's
+// version, so the commit and build time are how one fork build is told
+// from another in the settings tab.
+function git(args) {
+	try {
+		return execSync(`git ${args}`, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+	} catch {
+		return "";
+	}
+}
+const buildInfo = JSON.stringify({
+	commit: git("rev-parse --short HEAD") || "unknown",
+	branch: git("rev-parse --abbrev-ref HEAD") || "unknown",
+	builtAt: new Date().toISOString(),
+});
+// define takes a JS expression; a JSON string literal of the JSON object.
+const buildInfoDefine = JSON.stringify(buildInfo);
 
 const sharedConfig = {
 	banner: { js: banner },
@@ -60,6 +79,7 @@ if (qaProduct) {
 		define: {
 			// true → esbuild KEEPS the EngineControlPort block for harness use
 			"__YAOS_QA_HARNESS_ENABLED__": "true",
+			"__OG_CLOUD_BUILD__": buildInfoDefine,
 		},
 	});
 	await qaProductContext.rebuild();
@@ -79,6 +99,7 @@ const mainContext = await esbuild.context({
 	define: {
 		// false → esbuild eliminates getEngineControlPort, ingestDiskFileNow, etc.
 		"__YAOS_QA_HARNESS_ENABLED__": "false",
+		"__OG_CLOUD_BUILD__": buildInfoDefine,
 	},
 });
 

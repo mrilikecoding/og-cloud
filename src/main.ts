@@ -188,6 +188,8 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 	private statusBarEl: HTMLElement | null = null;
 	/** Full status text behind the compact bar, shown on click. */
 	private lastStatusFull: string | null = null;
+	/** Settings-tab rows that want to hear about sync status changes. */
+	private syncStatusListeners = new Set<() => void>();
 	private statusInterval: number | null = null;
 	private readonly receiptStatusRefresh = new CoalescedStatusRefresh(() => {
 		if (!this.teardownLifecycle.isClosing) this.refreshStatusBar();
@@ -1805,7 +1807,19 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 		};
 	}
 
+	onSyncStatusChanged(listener: () => void): () => void {
+		this.syncStatusListeners.add(listener);
+		return () => { this.syncStatusListeners.delete(listener); };
+	}
+
 	private updateStatusBar(_coarseState: SyncStatus): void {
+		for (const listener of this.syncStatusListeners) {
+			try {
+				listener();
+			} catch (err) {
+				console.error("[yaos] sync status listener failed:", err);
+			}
+		}
 		if (!this.statusBarEl) return;
 		const connectionState = this.connectionController?.getState();
 		const transferStatus = this.getBlobSync()?.transferStatus;

@@ -13,6 +13,7 @@ import {
 	type ExternalEditPolicy,
 	type VaultSyncSettings,
 } from "./settingsStore";
+import { formatPluginVersion, getBuildInfo } from "../buildInfo";
 
 type SettingsAuthMode = "env" | "claim" | "unclaimed" | "unknown";
 type SettingsStatusState = "disconnected" | "loading" | "syncing" | "connected" | "offline" | "error" | "unauthorized";
@@ -59,6 +60,12 @@ export interface VaultSyncSettingsHost {
 	refreshUpdateManifest(reason?: string, force?: boolean): Promise<void>;
 	refreshAttachmentSyncRuntime(reason?: string): Promise<void>;
 	getSettingsStatusSummary(): { state: SettingsStatusState; label: string };
+	/**
+	 * Subscribe to sync status changes. Returns the unsubscribe. The tab's
+	 * Status row uses this to stay current while the settings window is
+	 * open, since definitions are otherwise computed once per display().
+	 */
+	onSyncStatusChanged(listener: () => void): () => void;
 	getUpdateState(): SettingsUpdateState;
 	buildSetupDeepLink(): string | null;
 	buildMobileSetupUrl(): string | null;
@@ -151,7 +158,17 @@ export class VaultSyncSettingTab extends PluginSettingTab {
 			});
 		} else {
 			const statusItems: SettingDefinition[] = [
-				{ name: "Status", desc: syncStatus.label },
+				{
+					name: "Status",
+					desc: syncStatus.label,
+					render: (setting) => {
+						const apply = (): void => {
+							setting.setDesc(this.host.getSettingsStatusSummary().label);
+						};
+						apply();
+						return this.host.onSyncStatusChanged(apply);
+					},
+				},
 				{ name: "Server", desc: this.host.settings.host },
 				{ name: "Vault", desc: shortenMiddle(this.host.settings.vaultId || "Not set") },
 				{ name: "This device", desc: this.host.settings.deviceName || "Unnamed" },
@@ -176,7 +193,7 @@ export class VaultSyncSettingTab extends PluginSettingTab {
 			const updateItems: SettingDefinition[] = [
 				{ name: "Server version", desc: updateState.serverVersion ?? "Unknown" },
 				{ name: "Latest server", desc: updateState.latestServerVersion ?? "Unknown" },
-				{ name: "Plugin version", desc: updateState.pluginVersion },
+				{ name: "Plugin version", desc: formatPluginVersion(updateState.pluginVersion, getBuildInfo()) },
 				{ name: "Latest plugin", desc: updateState.latestPluginVersion ?? "Unknown" },
 				{ name: "Update path", desc: updateState.updateRepoUrl ?? "Not configured" },
 				{ name: "Update status", desc: updateSummary },

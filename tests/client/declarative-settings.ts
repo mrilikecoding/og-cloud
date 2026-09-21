@@ -50,6 +50,7 @@ function createFixture(): {
 			attachmentRefreshReasons.push(reason ?? "");
 		},
 		getSettingsStatusSummary: () => ({ state: "connected", label: "Connected" }),
+		onSyncStatusChanged: () => () => {},
 		getUpdateState: () => ({
 			serverVersion: "0.3.0",
 			latestServerVersion: "0.3.0",
