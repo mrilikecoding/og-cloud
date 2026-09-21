@@ -240,7 +240,29 @@ export class DiskMirror {
 						}
 						break;
 					}
-					// mtime-changed, device-changed, removed, invalid:
+					case "removed": {
+						// An entry vanishing outright (no tombstone) is never a
+						// user action; only orphan cleanup on another device does
+						// it. No disk side effect, but leave a mark: Yjs cannot
+						// name the deleter, so the entry's own device and the
+						// wall clock are what a later correlation has to go on.
+						if (change.previous.deleted || change.previous.deletedAt) break;
+						const path = normalizePath(change.previous.path);
+						const onDisk = this.app.vault.getAbstractFileByPath(path) !== null;
+						this.log(
+							`meta: remote removal of active entry "${path}" ` +
+							`(id=${change.fileId}, created by ${change.previous.device ?? "unknown"}, ` +
+							`${onDisk ? "still on disk" : "not on disk"})`,
+						);
+						this.trace?.("disk", "meta-remote-active-removed", {
+							path,
+							fileId: change.fileId,
+							device: change.previous.device ?? null,
+							onDisk,
+						});
+						break;
+					}
+					// mtime-changed, device-changed, invalid:
 					// no disk side effect needed.
 				}
 			}
