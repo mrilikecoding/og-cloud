@@ -32,6 +32,13 @@ const FAST_SWITCH_WINDOW_MS = 2000;
 const POST_BIND_HEALTH_GRACE_MS = 100;
 const CM_RESOLVE_RETRY_DELAY_MS = 100;
 const CM_RESOLVE_MAX_RETRIES = 8;
+/**
+ * A note opened before the vault create handler has seeded its Y.Text from
+ * disk (Cmd+N opens the new file in the same tick it is created). Wait for
+ * the seed on a short backoff rather than inventing a Y.Text here.
+ */
+const BINDING_TARGET_RETRY_DELAY_MS = 100;
+const BINDING_TARGET_MAX_RETRIES = 8;
 
 /** Why a getCmView() call failed to resolve an editor, for degraded traces. */
 interface CmResolveFailure {
@@ -159,6 +166,8 @@ export class EditorBindingManager {
 	private cmDegradedWarned = false;
 	private cmResolveAttempts = new Map<string, number>();
 	private pendingCmResolveRetries = new Map<string, number>();
+	private bindingTargetAttempts = new Map<string, number>();
+	private pendingBindingTargetRetries = new Map<string, { timer: number; path: string }>();
 	/**
 	 * Why the last getCmView() call returned null. Attached to the degraded
 	 * trace so field reports separate "no editor ever registered" (our CM6
@@ -493,6 +502,10 @@ export class EditorBindingManager {
 			this.log(`unbindAll: destroyed binding for "${binding.path}"`);
 		}
 		this.bindings.clear();
+		// Leaves still waiting for a disk seed have no binding to iterate above.
+		for (const leafId of [...this.pendingBindingTargetRetries.keys()]) {
+			this.clearBindingTargetRetry(leafId);
+		}
 	}
 
 	/**
@@ -1430,9 +1443,11 @@ export class EditorBindingManager {
 	): BindingTarget | null {
 		const file = view.file;
 		if (!file) return null;
+		const leafId = view.leaf.id ?? file.path;
 
 		const existingText = this.vaultSync.getTextForPath(file.path);
 		if (existingText) {
+			this.clearBindingTargetRetry(leafId);
 			return {
 				ytext: existingText,
 				fileId:
@@ -1446,29 +1461,78 @@ export class EditorBindingManager {
 			return null;
 		}
 
-		const currentContent = view.editor.getValue();
-		const ytext = this.vaultSync.ensureFile(file.path, currentContent, deviceName);
-		if (!ytext) {
-			if (this.isHardTombstonedPath(file.path)) {
-				this.handleTombstonedBinding(view, `${reason}:ensureFile-null`);
-			} else {
-				this.log(`resolveBindingTarget: ensureFile returned null for "${file.path}" (reason=${reason})`);
-				this.trace?.("editor", "binding-target-missing", {
-					path: file.path,
-					reason,
-					leafId:
-						view.leaf.id ?? file.path,
-				});
-			}
-			return null;
+		// Never seed the Y.Text from the editor. At bind time the CodeMirror doc
+		// can still hold the previous note in this leaf (Obsidian fires
+		// active-leaf-change before it loads the new file), and a Y.Text born
+		// from it carries a ghost copy of that note. The vault create/modify
+		// handler seeds from disk; wait for it.
+		this.log(
+			`resolveBindingTarget: no Y.Text for "${file.path}" yet ` +
+			`(reason=${reason}) — waiting for the disk seed`,
+		);
+		this.trace?.("editor", "binding-target-missing", {
+			path: file.path,
+			reason,
+			leafId,
+		});
+		this.scheduleBindingTargetRetry(view, deviceName, leafId, reason);
+		return null;
+	}
+
+	private scheduleBindingTargetRetry(
+		view: MarkdownView,
+		deviceName: string,
+		leafId: string,
+		source: string,
+	): void {
+		const path = view.file?.path;
+		if (path === undefined) return;
+
+		// A retry for a different note in this leaf is stale: the leaf moved on.
+		const pending = this.pendingBindingTargetRetries.get(leafId);
+		if (pending && pending.path !== path) {
+			this.clearBindingTargetRetry(leafId);
+		} else if (pending) {
+			return;
 		}
 
-		return {
-			ytext,
-			fileId:
-				this.vaultSync.getFileId(file.path)
-				?? this.vaultSync.getFileIdForText(ytext),
-		};
+		const attempts = (this.bindingTargetAttempts.get(leafId) ?? 0) + 1;
+		this.bindingTargetAttempts.set(leafId, attempts);
+
+		if (attempts > BINDING_TARGET_MAX_RETRIES) {
+			this.log(
+				`resolveBindingTarget: giving up on "${path}" ` +
+				`after ${attempts - 1} retries (leaf=${leafId}, source=${source})`,
+			);
+			this.trace?.("editor", "binding-target-gave-up", {
+				leafId,
+				path,
+				source,
+				attempts: attempts - 1,
+			});
+			this.bindingTargetAttempts.delete(leafId);
+			return;
+		}
+
+		const retryDelay = BINDING_TARGET_RETRY_DELAY_MS * attempts;
+		const timer = window.setTimeout(() => {
+			this.pendingBindingTargetRetries.delete(leafId);
+			if (view.file?.path !== path) {
+				this.bindingTargetAttempts.delete(leafId);
+				return;
+			}
+			this.bind(view, deviceName);
+		}, retryDelay);
+		this.pendingBindingTargetRetries.set(leafId, { timer, path });
+	}
+
+	private clearBindingTargetRetry(leafId: string): void {
+		const pending = this.pendingBindingTargetRetries.get(leafId);
+		if (pending) {
+			window.clearTimeout(pending.timer);
+			this.pendingBindingTargetRetries.delete(leafId);
+		}
+		this.bindingTargetAttempts.delete(leafId);
 	}
 
 	private isHardTombstonedPath(path: string): boolean {
