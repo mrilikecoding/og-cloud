@@ -252,6 +252,14 @@ function buildFrontmatterFixture(options: FixtureOptions): FrontmatterFixture {
 			if (ago == null) return null;
 			return Date.now() - ago;
 		},
+		// The localOnly idle guard reads real doc changes; the fixture's
+		// "activity" option stands in for typing here.
+		getLastEditorDocChangeForPath: () => {
+			const ago = options.lastEditorActivityAgoMs;
+			if (ago == null) return null;
+			return Date.now() - ago;
+		},
+		suspendCollab: () => true,
 	};
 
 	const app = {

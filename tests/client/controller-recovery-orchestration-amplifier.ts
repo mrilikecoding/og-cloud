@@ -19,6 +19,14 @@
  *   - Scenario 2: monotonic-growth amplification quarantine
  *   - Scenario 3: fingerprint quarantine still trips on its shape (regression)
  *   - Scenario 4: pause from the idle guard resets the amplification detector
+ *
+ * 2026-09-21: the amplifier itself was the recovery diff being mirrored back
+ * into the editor by y-codemirror (the Y.Text change had a non-editor
+ * origin, so the editor, which already held that text, received it again).
+ * Recovery now suspends yCollab on every bound view before the diff and
+ * repairs it after, so editor.repair.applied is expected once per applied
+ * recovery, healthy binding or not. The idle guard and quarantines stay as
+ * defense in depth.
  */
 
 import { MarkdownView, TFile } from "obsidian";
@@ -183,6 +191,10 @@ function buildFixture(initial: {
 		rebind: () => {},
 		unbindByPath: () => {},
 		getLastEditorActivityForPath: () => lastEditorActivity,
+		// The localOnly idle guard reads real doc changes since bind; this
+		// fixture's "activity" is the user typing, so both accessors agree.
+		getLastEditorDocChangeForPath: () => lastEditorActivity,
+		suspendCollab: () => true,
 	};
 
 	const app = {
@@ -340,9 +352,9 @@ s.section("Scenario 1: localOnly idle guard defers when editor typed recently");
 	s.check(decision !== undefined, "second pass: recovery.decision emitted");
 	s.check(applyStart !== undefined, "second pass: recovery.apply.start emitted");
 	s.check(applyDone !== undefined, "second pass: recovery.apply.done emitted");
-	// Healthy binding: repair must NOT be called. Reviewer item:
-	// "Stop unconditional editor repair unless binding health is bad."
-	s.check(repair === undefined, "second pass: NO editor.repair.applied (binding healthy)");
+	// Collab is suspended around the diff, so a repair follows every applied
+	// recovery, healthy binding or not.
+	s.check(repair !== undefined, "second pass: editor.repair.applied after the diff (collab was suspended)");
 	// recovery.decision now carries a binding-health snapshot for RCA.
 	assertEq(decision?.data.anyBindingUnhealthy, false, "second pass: anyBindingUnhealthy === false");
 
@@ -397,10 +409,9 @@ s.section("Scenario 2: monotonic-growth quarantine fires on cycle 3");
 	assertEq(decisions.length, 3, "three recovery.decision events (one per cycle)");
 	assertEq(applyStarts.length, 2, "only the first two cycles entered apply.start");
 	assertEq(applyDones.length, 2, "only the first two cycles emitted apply.done");
-	// Healthy binding throughout, so repair is never called even though
-	// recovery applied the diff. This is the conditional-repair rule:
-	// content recovery and binding repair are independent operations.
-	assertEq(repairs.length, 0, "binding healthy throughout: no editor.repair.applied");
+	// One repair per applied recovery (collab suspended around each diff);
+	// the quarantined third cycle applied nothing and repaired nothing.
+	assertEq(repairs.length, 2, "one editor.repair.applied per applied cycle, none for the quarantined one");
 	assertEq(ampQuarantined.length, 1, "exactly one recovery.amplification.quarantined event");
 	assertEq(loopDetected.length, 1, "exactly one recovery.loop.detected event");
 	assertEq(fingerprintQuarantined.length, 0, "fingerprint quarantine did NOT fire (different fingerprints)");
@@ -514,8 +525,7 @@ s.section("Scenario 4: pause from idle guard resets the amplification detector")
 	s.check(finalDecision !== undefined, "final cycle: recovery.decision emitted");
 	s.check(finalApplyStart !== undefined, "final cycle: recovery.apply.start emitted");
 	s.check(finalApplyDone !== undefined, "final cycle: recovery.apply.done emitted");
-	// Binding healthy → no repair (conditional-repair rule).
-	s.check(finalRepair === undefined, "final cycle: NO editor.repair.applied (binding healthy)");
+	s.check(finalRepair !== undefined, "final cycle: editor.repair.applied after the diff (collab was suspended)");
 	s.check(finalAmpQuarantined === undefined, "final cycle: NO recovery.amplification.quarantined (history cleared)");
 
 	assertEq(fix.ytext.toString(), "z".repeat(60), "Y.Text equals final disk after recovery");
@@ -552,8 +562,8 @@ s.section("Scenario 5: unhealthy binding triggers editor.repair.applied");
 	s.check(health[0]?.healthy === false, "bindingHealth[0].healthy === false");
 	s.check((health[0]?.reasons.length ?? 0) > 0, "bindingHealth[0].reasons populated");
 
-	// Now flip to healthy and force another recovery — repair must NOT
-	// be called this time even though content recovery applies.
+	// Now flip to healthy and force another recovery. Repair still follows,
+	// because collab is suspended around every applied diff.
 	fix.setBindingHealthy(true);
 	fix.clearBoundRecoveryLocks();
 	fix.ytext.delete(0, fix.ytext.length);
@@ -566,6 +576,6 @@ s.section("Scenario 5: unhealthy binding triggers editor.repair.applied");
 	const newRepair = newEvents.find((e) => e.kind === FLIGHT_KIND.editorRepairApplied);
 	s.check(newDecision !== undefined, "healthy pass: recovery.decision emitted");
 	s.check(newApplyDone !== undefined, "healthy pass: recovery.apply.done emitted");
-	s.check(newRepair === undefined, "healthy pass: NO editor.repair.applied");
+	s.check(newRepair !== undefined, "healthy pass: editor.repair.applied after the diff (collab was suspended)");
 }
 await s.done();

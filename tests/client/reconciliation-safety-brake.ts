@@ -379,6 +379,8 @@ s.section("Test 5: bound recovery force-replaces when CRDT changes after authori
 		rebind: () => {},
 		unbindByPath: () => {},
 		getLastEditorActivityForPath: () => null,
+		getLastEditorDocChangeForPath: () => null,
+		suspendCollab: () => true,
 	});
 
 	const controller = new ReconciliationController({
@@ -485,6 +487,8 @@ s.section("Test 6: bound ambiguous divergence creates a conflict artifact");
 		rebind: () => {},
 		unbindByPath: () => {},
 		getLastEditorActivityForPath: () => null,
+		getLastEditorDocChangeForPath: () => null,
+		suspendCollab: () => true,
 	});
 
 	const controller = new ReconciliationController({
@@ -584,6 +588,8 @@ s.section("Test 7: repeated identical recovery fingerprint is quarantined");
 		rebind: () => {},
 		unbindByPath: () => {},
 		getLastEditorActivityForPath: () => null,
+		getLastEditorDocChangeForPath: () => null,
+		suspendCollab: () => true,
 	});
 
 	const controller = new ReconciliationController({
@@ -683,6 +689,8 @@ s.section("Test 8: successful recovery clears quarantine fingerprint");
 		rebind: () => {},
 		unbindByPath: () => {},
 		getLastEditorActivityForPath: () => null,
+		getLastEditorDocChangeForPath: () => null,
+		suspendCollab: () => true,
 	});
 
 	const controller = new ReconciliationController({
@@ -801,6 +809,8 @@ s.section("Test 9: convergence failure does not create infinite conflict artifac
 		rebind: () => {},
 		unbindByPath: () => {},
 		getLastEditorActivityForPath: () => null,
+		getLastEditorDocChangeForPath: () => null,
+		suspendCollab: () => true,
 	});
 
 	const controller = new ReconciliationController({
@@ -906,6 +916,8 @@ s.section("Test 10: second reconcile after successful convergence does not creat
 		rebind: () => {},
 		unbindByPath: () => {},
 		getLastEditorActivityForPath: () => null,
+		getLastEditorDocChangeForPath: () => null,
+		suspendCollab: () => true,
 	});
 
 	const controller = new ReconciliationController({
@@ -1005,6 +1017,8 @@ s.section("Test 11: artifact creation failure does NOT trigger convergence");
 		rebind: () => {},
 		unbindByPath: () => {},
 		getLastEditorActivityForPath: () => null,
+		getLastEditorDocChangeForPath: () => null,
+		suspendCollab: () => true,
 	});
 
 	const controller = new ReconciliationController({
@@ -1155,6 +1169,8 @@ s.section("Test 13: mutating three-way split does not mint unbounded artifacts")
 		rebind: () => {},
 		unbindByPath: () => {},
 		getLastEditorActivityForPath: () => null,
+		getLastEditorDocChangeForPath: () => null,
+		suspendCollab: () => true,
 	});
 
 	const controller = new ReconciliationController({

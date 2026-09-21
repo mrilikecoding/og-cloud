@@ -199,6 +199,8 @@ function buildFixture(initial: {
 		rebind: () => {},
 		unbindByPath: () => {},
 		getLastEditorActivityForPath: () => null,
+		getLastEditorDocChangeForPath: () => null,
+		suspendCollab: () => true,
 	};
 
 	const app = {

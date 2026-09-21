@@ -59,7 +59,10 @@ interface EditorBinding {
 	fileId?: string;
 	lastBoundAt: string;
 	lastBoundAtMs: number;
+	/** Bind time or the last editor update, whichever is later. */
 	lastEditorChangeAtMs: number;
+	/** Last doc-changing editor update since bind; null until the user types. */
+	lastDocChangeAtMs: number | null;
 	settleWindowMs: number;
 }
 
@@ -709,6 +712,28 @@ export class EditorBindingManager {
 	 * tracked path was renamed, update the tracking. The yCollab binding
 	 * itself doesn't need to change (stable file IDs), but our bookkeeping does.
 	 */
+	/**
+	 * Detach yCollab from the view's editor while keeping the binding record,
+	 * so a caller can edit the bound Y.Text without y-codemirror mirroring
+	 * that edit into an editor that already shows it. Follow with repair()
+	 * to re-attach. Returns false when the view has no binding.
+	 */
+	suspendCollab(view: MarkdownView, reason: string): boolean {
+		const file = view.file;
+		const leafId = view.leaf.id ?? file?.path ?? "unknown";
+		const binding = this.bindings.get(leafId);
+		if (!binding) return false;
+		try {
+			binding.cm.dispatch({ effects: this.compartment.reconfigure([]) });
+		} catch (err) {
+			this.log(`suspendCollab: failed for "${binding.path}" (leaf=${leafId}): ${String(err)}`);
+			return false;
+		}
+		this.log(`suspendCollab: detached "${binding.path}" (leaf=${leafId}, reason=${reason})`);
+		this.trace?.("editor", "collab-suspended", { leafId, path: binding.path, reason });
+		return true;
+	}
+
 	updatePathsAfterRename(renames: Map<string, string>): void {
 		for (const [leafId, binding] of this.bindings) {
 			const newPath = renames.get(binding.path);
@@ -801,6 +826,23 @@ export class EditorBindingManager {
 			if (binding.path !== path) continue;
 			if (latest == null || binding.lastEditorChangeAtMs > latest) {
 				latest = binding.lastEditorChangeAtMs;
+			}
+		}
+		return latest;
+	}
+
+	/**
+	 * When the user last changed the document in any editor bound to `path`,
+	 * or null if nothing has been typed since the binding was made. Unlike
+	 * getLastEditorActivityForPath this does not count the bind itself, so a
+	 * freshly opened note does not look like one the user is mid-keystroke in.
+	 */
+	getLastEditorDocChangeForPath(path: string): number | null {
+		let latest: number | null = null;
+		for (const binding of this.bindings.values()) {
+			if (binding.path !== path || binding.lastDocChangeAtMs == null) continue;
+			if (latest == null || binding.lastDocChangeAtMs > latest) {
+				latest = binding.lastDocChangeAtMs;
 			}
 		}
 		return latest;
@@ -1134,7 +1176,9 @@ export class EditorBindingManager {
 		const match = this.findBindingForCm(update.view);
 		if (!match) return;
 		if (update.docChanged) {
-			match.binding.lastEditorChangeAtMs = Date.now();
+			const now = Date.now();
+			match.binding.lastEditorChangeAtMs = now;
+			match.binding.lastDocChangeAtMs = now;
 		}
 		this.maybeHealBinding(match.leafId, match.binding, "live-update");
 	}
@@ -1363,6 +1407,10 @@ export class EditorBindingManager {
 			lastBoundAt: new Date(boundAtMs).toISOString(),
 			lastBoundAtMs: boundAtMs,
 			lastEditorChangeAtMs: boundAtMs,
+			// A repair of the same note keeps its typing history; a bind to a
+			// different note starts fresh.
+			lastDocChangeAtMs:
+				existing && existing.path === filePath ? existing.lastDocChangeAtMs : null,
 			settleWindowMs,
 		});
 		this.cmToLeafId.set(cm, leafId);

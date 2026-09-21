@@ -152,6 +152,8 @@ const OPEN_FILE_EXTERNAL_EDIT_IDLE_GRACE_MS = 1200;
  * window longer than a typical human typing burst; 3000ms is conservative.
  */
 const OPEN_FILE_LOCAL_ONLY_RECOVERY_IDLE_MS = 3000;
+/** Slack added to a deferred localOnly retry so it lands past the idle window. */
+const LOCAL_ONLY_RECOVERY_RETRY_GRACE_MS = 100;
 const BOUND_RECOVERY_LOCK_MS = 1500;
 const TRACE_PATH_SAMPLE_LIMIT = 50;
 
@@ -286,6 +288,8 @@ export class ReconciliationController {
 	private markdownDrainTimer: number | null = null;
 	private lastMarkdownDirtyAt = 0;
 	private boundRecoveryLocks = new Map<string, number>();
+	/** Pending retry per path after a localOnly recovery was deferred for typing. */
+	private localOnlyRetryTimers = new Map<string, number>();
 	private recoveryFingerprints = new Map<string, FingerprintEntry>();
 	/**
 	 * Per-path amplification history for the monotonic-growth quarantine.
@@ -375,6 +379,10 @@ export class ReconciliationController {
 			window.clearTimeout(this.markdownDrainTimer);
 			this.markdownDrainTimer = null;
 		}
+		for (const timer of this.localOnlyRetryTimers.values()) {
+			window.clearTimeout(timer);
+		}
+		this.localOnlyRetryTimers.clear();
 		this.reconciled = false;
 		this.reconcileInFlight = false;
 		this.reconcilePending = false;
@@ -1388,6 +1396,27 @@ export class ReconciliationController {
 		await this.syncFileFromDisk(abstractFile, reason, opId, coalescedOpIds);
 	}
 
+	/**
+	 * Re-run the disk sync for `path` once the localOnly idle window has
+	 * passed. One pending retry per path; a newer deferral replaces it.
+	 */
+	private scheduleLocalOnlyRecoveryRetry(path: string, delayMs: number): void {
+		const existing = this.localOnlyRetryTimers.get(path);
+		if (existing !== undefined) {
+			window.clearTimeout(existing);
+		}
+		const timer = window.setTimeout(() => {
+			this.localOnlyRetryTimers.delete(path);
+			const abstractFile = this.deps.app.vault.getAbstractFileByPath(path);
+			if (!(abstractFile instanceof TFile)) return;
+			void this.syncFileFromDisk(abstractFile, "modify").catch((err) => {
+				console.error(`[yaos] localOnly recovery retry failed for "${path}":`, err);
+			});
+		}, delayMs);
+		this.localOnlyRetryTimers.set(path, timer);
+		this.deps.trace("recovery", "local-only-recovery-retry-scheduled", { path, delayMs });
+	}
+
 	private async syncFileFromDisk(
 		file: TFile,
 		sourceReason: "create" | "modify" = "modify",
@@ -1665,20 +1694,21 @@ export class ReconciliationController {
 			});
 
 			if (existingText) {
-				// Localized idle guard: defer recovery if the user just typed.
-				// The localOnly branch is the typing-cadence amplifier shape:
-				// editor matches disk but CRDT trails, repeatedly, because
-				// Obsidian autosave lands keystrokes faster than the
-				// y-codemirror.next plumbing propagates them into Y.Text.
-				// Quenching that loop requires a window longer than a typical
-				// human typing burst.
-				const lastEditorActivityLocalOnly =
-					editorBindings?.getLastEditorActivityForPath(file.path) ?? null;
+				// Localized idle guard: defer recovery while the user is typing,
+				// so the collab suspend/repair below never lands mid-keystroke.
+				// Reads real doc changes since bind, not bind-time activity: a
+				// freshly opened note is not one the user is mid-keystroke in.
+				// The deferral is not the end of it: a retry is scheduled for
+				// when the idle window has elapsed, because Obsidian autosaves
+				// inside that window and the next disk event would only defer
+				// again for as long as the user keeps typing.
+				const lastDocChangeLocalOnly =
+					editorBindings?.getLastEditorDocChangeForPath(file.path) ?? null;
 				if (
-					lastEditorActivityLocalOnly !== null
-					&& (Date.now() - lastEditorActivityLocalOnly) < OPEN_FILE_LOCAL_ONLY_RECOVERY_IDLE_MS
+					lastDocChangeLocalOnly !== null
+					&& (Date.now() - lastDocChangeLocalOnly) < OPEN_FILE_LOCAL_ONLY_RECOVERY_IDLE_MS
 				) {
-					const idleMs = Date.now() - lastEditorActivityLocalOnly;
+					const idleMs = Date.now() - lastDocChangeLocalOnly;
 					this.deps.log(
 						`syncFileFromDisk: deferring "${file.path}" ` +
 						`(editor-bound local-only, recent typing ${idleMs}ms ago)`,
@@ -1698,6 +1728,10 @@ export class ReconciliationController {
 					});
 					// Pauses reset the amplification detector. See spec R3.8.
 					this.amplificationHistory.delete(file.path);
+					this.scheduleLocalOnlyRecoveryRetry(
+						file.path,
+						OPEN_FILE_LOCAL_ONLY_RECOVERY_IDLE_MS - idleMs + LOCAL_ONLY_RECOVERY_RETRY_GRACE_MS,
+					);
 					return true;
 				}
 
@@ -1795,6 +1829,16 @@ export class ReconciliationController {
 						crdtLength: crdtContent?.length ?? null,
 					},
 				});
+				// Detach yCollab from every bound view first. y-codemirror mirrors
+				// any non-editor-origin Y.Text change into the editor, and these
+				// editors already show the disk content the diff is about to
+				// write into the CRDT; mirrored, the diff would be applied to
+				// the editor a second time, autosaved, and re-diffed on the next
+				// cycle (the 2026-05-27 iPad "+5 per cycle" amplifier). Repaired
+				// below once the Y.Text matches the editor again.
+				for (const state of localOnlyViews) {
+					editorBindings?.suspendCollab(state.view, "bound-file-local-only-divergence");
+				}
 				const recoveryResult = applyDiffToYTextWithPostcondition(
 					existingText,
 					crdtContent ?? "",
@@ -1901,36 +1945,19 @@ export class ReconciliationController {
 			}
 			this.boundRecoveryLocks.set(file.path, Date.now() + BOUND_RECOVERY_LOCK_MS);
 
-			// Binding-health-conditional repair.
-			//
-			// The original code reconfigured the CodeMirror compartment via
-			// editorBindings.repair() on EVERY localOnly recovery cycle, even
-			// when the binding was healthy. Each reconfigure adds jitter to
-			// the editor↔ytext propagation and contributed to the typing-
-			// cadence amplifier loop captured in the 2026-05-27 iPad trace.
-			//
-			// New rule: only repair when the captured binding/collab debug
-			// info shows actual unhealth. A healthy binding does NOT need
-			// to be reconfigured just because content recovery happened.
-			//
-			// Two operations are now distinct:
-			//   - content recovery (always run when the predicate is met)
-			//   - editor binding repair (run only when health markers fail)
+			// Re-attach yCollab on every view. The diff path above suspended
+			// collab on each of them before writing the Y.Text, so a repair is
+			// due whether or not the binding was healthy going in. (An earlier
+			// version repaired only unhealthy bindings, on the theory that the
+			// reconfigure jitter fed the amplifier; the amplifier was the
+			// mirrored diff, which suspending removes.) The health snapshot
+			// captured before recovery is kept in the trace for diagnosis.
 			for (const state of localOnlyViews) {
 				const health = classifyBindingHealth(state.binding, state.collab);
-				if (health.healthy) {
-					this.deps.trace("recovery", "binding-healthy-skipped-repair", {
-						path: file.path,
-						leafId: state.binding?.leafId ?? null,
-						cmMatches: state.binding?.cmMatches ?? null,
-						hasSyncFacet: state.collab?.hasSyncFacet ?? null,
-						yTextMatchesExpected: state.collab?.yTextMatchesExpected ?? null,
-					});
-					continue;
-				}
-				this.deps.trace("recovery", "binding-unhealthy-repairing", {
+				this.deps.trace("recovery", "binding-repair-after-recovery", {
 					path: file.path,
 					leafId: state.binding?.leafId ?? null,
+					healthyBeforeRecovery: health.healthy,
 					reasons: health.reasons,
 				});
 				const repaired = editorBindings?.repair(
