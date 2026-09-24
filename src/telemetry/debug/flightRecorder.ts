@@ -12,6 +12,7 @@ import {
 	type FlightPriority,
 } from "../../observability/flightTaxonomy";
 import type { FlightMode, TraceContext } from "./flightEvents";
+import { deleteDirectory, enforceLogRetention } from "./logRetention";
 
 const DEFAULT_FLUSH_MS = 1000;
 const DEFAULT_MAX_PENDING_LINES = 3000;
@@ -565,80 +566,16 @@ export class FlightRecorder {
 		await this.enforceRetention();
 	}
 
-	/**
-	 * Delete oldest day-level directories under flight-logs/ until total size
-	 * falls below MAX_TOTAL_BYTES.
-	 */
+	/** Day-level pruning, shared with the plain trace logger. */
 	private async enforceRetention(): Promise<void> {
-		try {
-			const root = this.logsRoot();
-			const rootExists = await this.app.vault.adapter.exists(root);
-			if (!rootExists) return;
-
-			const listing = await this.app.vault.adapter.list(root);
-			const dayDirs = listing.folders
-				.map((d) => d.split("/").pop() ?? "")
-				.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-				.sort(); // ascending: oldest first
-
-			// Remove directories older than MAX_DAYS.
-			const today = new Date().toISOString().slice(0, 10);
-			const cutoff = new Date(Date.now() - MAX_DAYS * 86_400_000).toISOString().slice(0, 10);
-			for (const dir of dayDirs) {
-				if (dir < cutoff) {
-					await this.deleteDirectory(`${root}/${dir}`);
-				}
-			}
-
-			// Check total size; if still over limit, delete oldest day dirs.
-			let totalBytes = await this.estimateTotalBytes(root);
-			const remainingDirs = dayDirs.filter((d) => d >= cutoff && d !== today);
-			for (const dir of remainingDirs) {
-				if (totalBytes <= MAX_TOTAL_BYTES) break;
-				const dirSize = await this.estimateTotalBytes(`${root}/${dir}`);
-				await this.deleteDirectory(`${root}/${dir}`);
-				totalBytes -= dirSize;
-			}
-		} catch {
-			// Retention enforcement failures are non-fatal.
-		}
-	}
-
-	private async estimateTotalBytes(dir: string): Promise<number> {
-		try {
-			const listing = await this.app.vault.adapter.list(dir);
-			let total = 0;
-			for (const filePath of listing.files) {
-				try {
-					const stat = await this.app.vault.adapter.stat(filePath);
-					total += stat?.size ?? 0;
-				} catch { /* skip */ }
-			}
-			for (const subDir of listing.folders) {
-				total += await this.estimateTotalBytes(subDir);
-			}
-			return total;
-		} catch {
-			return 0;
-		}
+		await enforceLogRetention(this.app.vault.adapter, this.logsRoot(), {
+			maxDays: MAX_DAYS,
+			maxTotalBytes: MAX_TOTAL_BYTES,
+		});
 	}
 
 	private async deleteDirectory(dir: string): Promise<void> {
-		try {
-			const listing = await this.app.vault.adapter.list(dir);
-			for (const filePath of listing.files) {
-				try {
-					await this.app.vault.adapter.remove(filePath);
-				} catch { /* skip */ }
-			}
-			for (const subDir of listing.folders) {
-				await this.deleteDirectory(subDir);
-			}
-			// Remove the now-empty directory (best-effort).
-			try {
-				await this.app.vault.adapter.rmdir(dir, false);
-			} catch { /* ok if not empty or not found */ }
-		} catch { /* skip */ }
+		await deleteDirectory(this.app.vault.adapter, dir);
 	}
 
 	/**
