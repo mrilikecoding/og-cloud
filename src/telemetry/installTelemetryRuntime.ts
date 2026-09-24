@@ -278,7 +278,11 @@ export async function installTelemetryRuntime(host: TelemetryRuntimeHost): Promi
 		diagnosticsService,
 		dispose,
 		createTraceLogger(app: App, config: TraceLoggerConfig): TraceLoggerPort {
-			return new PersistentTraceLogger(app, config);
+			const logger = new PersistentTraceLogger(app, config);
+			// Prune old day directories once per boot. Detached: retention is
+			// best-effort housekeeping and must not delay the logger going live.
+			void logger.enforceRetention();
+			return logger;
 		},
 		registerCommands: registerTelemetryCommands,
 	};

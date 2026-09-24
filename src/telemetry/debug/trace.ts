@@ -1,6 +1,7 @@
 import { type App, normalizePath } from "obsidian";
 import { pluginDir } from "../../pluginId";
 import { randomId } from "../../utils/randomId";
+import { enforceLogRetention } from "./logRetention";
 
 // Re-export product-safe types from observability layer.
 // Product code should import from observability/traceContext directly.
@@ -38,6 +39,13 @@ const MAX_PENDING_CHARS_APPROX = 512 * 1024;
  * chunk of a session is what that needs. current-state.json keeps updating.
  */
 const DEFAULT_MAX_STATE_HISTORY_BYTES = 16 * 1024 * 1024;
+/**
+ * Day-level retention for logs/, matching flight-logs/. The per-boot state
+ * cap above bounds one file; without these, days accumulated forever (489 MB
+ * over 10 days on one vault), which on a phone is a storage leak.
+ */
+const MAX_LOG_DAYS = 7;
+const MAX_LOG_TOTAL_BYTES = 100 * 1024 * 1024;
 
 function isAlreadyExistsError(error: unknown): boolean {
 	if (typeof error === "object" && error !== null && "code" in error) {
@@ -108,6 +116,19 @@ export class PersistentTraceLogger implements TraceLoggerPort {
 
 	get isEnabled(): boolean {
 		return this.enabled;
+	}
+
+	/**
+	 * Drop old day directories under logs/. Called once at startup: this
+	 * logger writes to one day at a time, so there is nothing to reclaim
+	 * mid-session that a later boot will not catch.
+	 */
+	async enforceRetention(): Promise<void> {
+		if (!this.enabled) return;
+		await enforceLogRetention(this.app.vault.adapter, this.rootDir, {
+			maxDays: MAX_LOG_DAYS,
+			maxTotalBytes: MAX_LOG_TOTAL_BYTES,
+		});
 	}
 
 	get httpContext(): TraceHttpContext {
