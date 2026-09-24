@@ -1,5 +1,4 @@
 import { App, Platform, apiVersion, normalizePath } from "obsidian";
-import { pluginDir } from "../../pluginId";
 import { deriveSyncFacts } from "../../runtime/connectionFacts";
 import type { BlobSyncSnapshot, DiskMirrorSnapshot, SyncReadPort } from "../telemetryRuntimeHost";
 import type { TraceHttpContext } from "../debug/trace";
@@ -68,6 +67,18 @@ function describePlatform(): TraceHeaderPlatform {
  * debug trace. Nothing here writes a file or shows a Notice: the trace export
  * owns the artifact, this owns the facts that go at the top of it.
  */
+/**
+ * Where exported debug traces land: a vault-root folder, not the plugin's
+ * own directory under the config dir.
+ *
+ * Two reasons. iOS Files hides dot-folders, so an export inside .obsidian is
+ * unreachable on a phone, which is where debug mode is hardest to get at.
+ * And a non-markdown file outside the config dir is blob-syncable, so the
+ * export travels to the other devices by itself. Nothing new is exposed:
+ * every note path and body already lives in the same bucket.
+ */
+export const DIAGNOSTICS_DIR = "og-cloud-logs";
+
 export class DiagnosticsService {
 	constructor(private readonly deps: DiagnosticsServiceDeps) {}
 
@@ -195,7 +206,7 @@ export class DiagnosticsService {
 	}
 
 	async ensureDiagnosticsDir(): Promise<string> {
-		const diagDir = normalizePath(`${pluginDir(this.deps.app)}/diagnostics`);
+		const diagDir = normalizePath(DIAGNOSTICS_DIR);
 		if (!(await this.deps.app.vault.adapter.exists(diagDir))) {
 			await this.deps.app.vault.adapter.mkdir(diagDir);
 		}
