@@ -3,6 +3,21 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+// The version published as "latest plugin". Defaults to manifest.json, which
+// every fork build shares; build.sh release passes the release tag so the
+// plugin-release copy of this manifest distinguishes one release from the next.
+function readPluginVersionOverride(argv) {
+	const index = argv.indexOf("--plugin-version");
+	if (index === -1) return null;
+	const value = argv[index + 1];
+	if (!value || value.startsWith("--")) {
+		throw new Error("--plugin-version requires a value");
+	}
+	return value;
+}
+const pluginVersionOverride = readPluginVersionOverride(process.argv.slice(2));
+
+const REPO = "mrilikecoding/og-cloud";
 const rootDir = resolve(".");
 const outputDir = resolve(rootDir, "dist/release-assets");
 const tempDir = mkdtempSync(join(tmpdir(), "yaos-server-release-"));
@@ -37,21 +52,22 @@ if (serverPackage.version !== serverVersion) {
 	);
 }
 
+const releaseTag = pluginVersionOverride ?? rootPackage.version;
 const updateManifest = {
 	latestServerVersion: serverVersion,
-	latestPluginVersion: pluginManifest.version,
+	latestPluginVersion: pluginVersionOverride ?? pluginManifest.version,
 	releaseType: "compatible",
 	autoUpdateEligible: false,
 	minCompatibleServerVersionForPlugin,
 	minCompatiblePluginVersionForServer,
 	upgradeOrder: "either",
-	releaseNotesUrl: `https://github.com/kavinsood/yaos/releases/tag/${rootPackage.version}`,
-	upgradeGuideUrl: "https://github.com/kavinsood/yaos#updating-your-server",
+	releaseNotesUrl: `https://github.com/${REPO}/releases/tag/${releaseTag}`,
+	upgradeGuideUrl: `https://github.com/${REPO}#updating-your-server`,
 };
 
 const serverZipManifest = {
 	serverVersion,
-	pluginVersion: pluginManifest.version,
+	pluginVersion: pluginVersionOverride ?? pluginManifest.version,
 	protectedFiles: ["wrangler.toml"],
 	updateOwnedPaths: [
 		".gitlab-ci.yml",

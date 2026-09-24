@@ -40,8 +40,14 @@ export type UpdateState = {
 	pluginCompatibilityWarning: string | null;
 };
 
+/**
+ * The fork publishes this on every plugin release (build.sh release). No
+ * upstream fallback: upstream's numbers describe a different project, and
+ * getHardCompatibilityBlockReason() can stop sync on them. A missing manifest
+ * leaves the version rows "Unknown" and the guards inert, which is correct.
+ */
 const UPDATE_MANIFEST_URLS = [
-	"https://github.com/kavinsood/yaos/releases/latest/download/update-manifest.json",
+	"https://github.com/mrilikecoding/og-cloud/releases/latest/download/update-manifest.json",
 ] as const;
 const UPDATE_MANIFEST_CACHE_MS = 24 * 60 * 60 * 1000;
 export const CAPABILITY_REFRESH_INTERVAL_MS = 30_000;

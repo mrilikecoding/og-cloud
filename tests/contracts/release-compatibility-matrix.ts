@@ -84,9 +84,42 @@ s.section("Emitted release artifact contract");
 		"emitted manifest release notes target the plugin release tag",
 	);
 	s.check(
-		emittedManifest.upgradeGuideUrl === "https://github.com/kavinsood/yaos#updating-your-server",
-		"emitted manifest has the canonical upgrade guide URL",
+		emittedManifest.upgradeGuideUrl === "https://github.com/mrilikecoding/og-cloud#updating-your-server",
+		"emitted manifest has the fork's upgrade guide URL",
 	);
+	s.check(
+		emittedManifest.releaseNotesUrl.startsWith("https://github.com/mrilikecoding/og-cloud/releases/tag/"),
+		"emitted manifest release notes point at the fork",
+	);
+	s.check(
+		!JSON.stringify(emittedManifest).includes("kavinsood"),
+		"emitted manifest carries no upstream URL",
+	);
+
+	// build.sh release publishes this file as a plugin-release asset, where the
+	// meaningful "latest plugin" is the release tag (2.1.1-og.N), not the
+	// manifest version every fork build shares.
+	execFileSync(process.execPath, ["build-server-release.mjs", "--plugin-version", "2.1.1-og.99"], {
+		cwd: root,
+		stdio: "pipe",
+	});
+	const taggedManifest = JSON.parse(
+		readSource("dist/release-assets/update-manifest.json"),
+	) as UpdateManifest;
+	s.check(
+		taggedManifest.latestPluginVersion === "2.1.1-og.99",
+		"--plugin-version overrides the emitted latest plugin version",
+	);
+	s.check(
+		taggedManifest.releaseNotesUrl.endsWith("/tag/2.1.1-og.99"),
+		"--plugin-version also retargets the release notes URL",
+	);
+	s.check(
+		taggedManifest.latestServerVersion === SERVER_VERSION,
+		"--plugin-version leaves the server version alone",
+	);
+	// Restore the default artifact so later assertions and callers see it.
+	execFileSync(process.execPath, ["build-server-release.mjs"], { cwd: root, stdio: "pipe" });
 
 	const archivePath = resolve(root, "dist/release-assets/yaos-server.zip");
 	const embeddedManifest = JSON.parse(
