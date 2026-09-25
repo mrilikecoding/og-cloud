@@ -523,6 +523,34 @@ export class DiskMirror {
 	// Disk write
 	// -------------------------------------------------------------------
 
+	/**
+	 * Create the parent folder of `normalizedPath`, if it is genuinely absent.
+	 *
+	 * The obvious check, getAbstractFileByPath, reads Obsidian's in-memory
+	 * index, which is still empty early in boot, while createFolder acts on the
+	 * filesystem. The two disagreed on 2026-09-25: reconcile ran before the
+	 * index was populated, decided long-existing folders were missing, and
+	 * createFolder threw "Folder already exists." before the write could
+	 * happen, losing 9 writes on that pass. The adapter is the filesystem, so
+	 * ask it, and treat a folder that appears underneath us (another writer
+	 * reaching the same new directory) as the success it is.
+	 */
+	private async ensureParentFolder(normalizedPath: string): Promise<void> {
+		const dir = normalizedPath.substring(0, normalizedPath.lastIndexOf("/"));
+		if (!dir) return;
+		const normalizedDir = normalizePath(dir);
+		if (await this.app.vault.adapter.exists(normalizedDir)) return;
+		try {
+			await this.app.vault.createFolder(normalizedDir);
+		} catch (err) {
+			if (await this.app.vault.adapter.exists(normalizedDir)) {
+				this.log(`ensureParentFolder: "${normalizedDir}" appeared concurrently, continuing`);
+				return;
+			}
+			throw err;
+		}
+	}
+
 	async flushWrite(path: string, force = false): Promise<void> {
 		path = normalizePath(path);
 		return this.runPathWriteLocked(path, () => this.flushWriteUnlocked(path, force));
@@ -586,14 +614,7 @@ export class DiskMirror {
 					return;
 				}
 				await this.suppressWrite(path, content);
-				const dir = normalized.substring(0, normalized.lastIndexOf("/"));
-				if (dir) {
-					const dirExists =
-						this.app.vault.getAbstractFileByPath(normalizePath(dir));
-					if (!dirExists) {
-						await this.app.vault.createFolder(dir);
-					}
-				}
+				await this.ensureParentFolder(normalized);
 				await this.app.vault.create(normalized, content);
 				this.log(
 					`flushWrite: created "${path}" on disk (${content.length} chars)`,
@@ -922,13 +943,7 @@ export class DiskMirror {
 					this.suppressDelete(oldNormalized);
 					await this.deleteLocalReplica(oldFile);
 				} else {
-					const dir = newNormalized.substring(0, newNormalized.lastIndexOf("/"));
-					if (dir) {
-						const dirNode = this.app.vault.getAbstractFileByPath(normalizePath(dir));
-						if (!dirNode) {
-							await this.app.vault.createFolder(dir);
-						}
-					}
+					await this.ensureParentFolder(newNormalized);
 					// Mark this rename as remote-originated before the vault event fires,
 					// so main.ts can consume the marker and skip queueRename.
 					// consumeRemoteRename() in the vault handler removes the marker on use.

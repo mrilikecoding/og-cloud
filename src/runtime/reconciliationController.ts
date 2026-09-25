@@ -105,6 +105,17 @@ interface ReconciliationControllerDeps {
 	onReconciled(reason: string): void;
 	recordFlightEvent?(event: ProductFlightEventInput): void;
 	recordFlightPathEvent?(event: ProductFlightPathEventInput): void;
+	/**
+	 * Resolves once Obsidian has populated its vault index.
+	 *
+	 * Reconcile compares the CRDT against app.vault.getMarkdownFiles(), which
+	 * is empty early in boot: on 2026-09-25 it ran ~2s after plugin start and
+	 * recorded 20 crdt-file-missing-on-disk decisions for notes that had
+	 * existed for years. Attachment sync already gated itself this way; this is
+	 * the same gate for markdown. Optional so existing callers and tests that
+	 * drive a fully-loaded vault need no change.
+	 */
+	whenVaultIndexReady?(): Promise<void>;
 	getAwaitingFirstProviderSyncAfterStartup(): boolean;
 	setAwaitingFirstProviderSyncAfterStartup(value: boolean): void;
 	saveDiskIndex(): Promise<void>;
@@ -471,6 +482,10 @@ export class ReconciliationController {
 		this.reconcileInFlight = true;
 
 		try {
+			// Nothing below may read the vault before Obsidian has indexed it.
+			if (this.deps.whenVaultIndexReady) {
+				await this.deps.whenVaultIndexReady();
+			}
 			this.deps.recordFlightEvent?.({
 				priority: "important",
 				kind: PRODUCT_EVENT_KIND.reconcileStart,

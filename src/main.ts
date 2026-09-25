@@ -188,6 +188,7 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 	private statusBarEl: HTMLElement | null = null;
 	/** Full status text behind the compact bar, shown on click. */
 	private lastStatusFull: string | null = null;
+	private _vaultIndexReady: Promise<void> | null = null;
 	/** Settings-tab rows that want to hear about sync status changes. */
 	private syncStatusListeners = new Set<() => void>();
 	private statusInterval: number | null = null;
@@ -284,8 +285,23 @@ export default class VaultCrdtSyncPlugin extends Plugin {
 					this._qaState.diskIngestPort = port;
 				}
 			},
+			whenVaultIndexReady: () => this.whenVaultIndexReady(),
 		});
 		return this.reconciliationController;
+	}
+
+	/**
+	 * Resolves once Obsidian has populated its vault index.
+	 *
+	 * onLayoutReady fires immediately when layout is already up, so this is a
+	 * no-op after startup and a real wait only on the first reconcile. Memoised:
+	 * every reconcile awaits it, and the callback must be registered once.
+	 */
+	private whenVaultIndexReady(): Promise<void> {
+		this._vaultIndexReady ??= new Promise<void>((resolve) => {
+			this.app.workspace.onLayoutReady(() => resolve());
+		});
+		return this._vaultIndexReady;
 	}
 
 	private isMarkdownPathSyncable(path: string): boolean {
