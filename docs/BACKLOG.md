@@ -301,6 +301,22 @@ The existing local `ws-ticket-reconnect` suite proves URL patching and short-TTL
 
 **Closure:** Root README and code comments link only to retained documents; no `docs/archive`, superseded RFC, old status ledger, orphan diagram, or ignored `qa-runs` path is presented as repository-verifiable current truth; total durable docs remain within the approved 2,000–3,000-line budget.
 
+### COST-01 — Durable Object stays resident despite hibernation
+
+**State:** Open efficiency gap, measured on the owlgourd deployment, no correctness impact observed.
+
+**Evidence:** `VaultSyncServer` already sets `static options = { hibernate: true }` (`server/src/server.ts`), yet Durable Object wall time runs 12 to 30 hours per day. Cloudflare GraphQL analytics for account `8f3ffbbe…`, 2026-09-19 to 2026-09-23 (deliberately excluding 09-24/25, which were heavy manual testing): 17.3 hours per day mean, projecting to roughly 520 hours and 233,000 GB-s per month, about 58% of the 400,000 GB-s included on Workers Paid. 2026-09-20 recorded 29.6 hours of wall time against only 832 Worker requests, so duration tracks connection lifetime rather than request volume. Client trace counts for 2026-09-25 show a floor of about 60 `receipt-server-echo` events per hour across every idle hour with zero edit activity, rising to 9,079 in the busiest editing hour. A wake every 60 seconds plausibly prevents hibernation from ever taking effect; the emitting timer has not been identified and may belong to the y-partyserver provider keepalive or awareness rather than to this fork. R2 and Worker request volumes are 1% or less of their allowances, so duration is the only resource near a limit. On the Workers free plan the documented daily Durable Object duration allowance is near the 13,304 GB-s recorded on 09-20, which would throttle rather than bill.
+
+**Required work:**
+
+1. Identify what produces the idle message floor: this fork's receipt or sv-echo path, the provider's keepalive, or awareness.
+2. Establish whether the Durable Object is genuinely hibernating between messages, and for how long it stays resident after each wake.
+3. Decide whether idle confirmation needs a round trip at all, and if it does, whether its interval can be lengthened or made adaptive to editing state.
+4. Reduce per-update echo volume during active editing if measurement shows it exceeds what durability confirmation requires.
+5. Re-measure duration per day after any change, from the same analytics query, rather than inferring from request counts.
+
+**Closure:** Measured Durable Object wall time per day falls materially below the current 12 to 30 hour band on a comparable usage week, with unchanged durability guarantees and no regression in the receipt suites; the idle message floor is either explained as necessary or removed.
+
 ## External issue closure
 
 | Item | External dependency |
