@@ -7,8 +7,7 @@
 // nothing to move and the new path was never opened. The rebind that follows
 // goes through the binding audit, not bindView, so nothing else tracked it.
 // From then on the mirror wrote the note to disk under the live editor on
-// every timestamp stamp: 148 of 700 stamps over three days, all on notes
-// created as Untitled and then renamed.
+// every timestamp stamp: 647 of 2,015 stamps between 09-26 and 10-03.
 
 import { MarkdownView, TFile } from "obsidian";
 import { EditorWorkspaceOrchestrator } from "../../src/runtime/editorWorkspaceOrchestrator";

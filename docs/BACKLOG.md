@@ -29,21 +29,22 @@ Each item names current evidence, required work, and closure evidence. Historica
 
 **Closure:** Focused regression fails before the fix and passes after it; re-enable keeps the file absent on the deleting device; the remote device observes the intended delete or an explicitly preserved conflict; unreadable-path and new-device materialization cases remain safe.
 
-### SYNC-03 — ambiguous-divergence files conflicts while a new note is being typed
+### SYNC-03 — conflict artifacts while a new note is being typed
 
-**State:** Open, reproducing in normal use, two incidents with artifacts on disk.
+**State:** Fixed in 985eb99 and d0b01c3, not yet confirmed in the field.
 
-**Evidence:** `Notes/Writing/Free Write/Snakes.md` on 2026-09-30T23:14:13Z and `Notes/Writing/Free Write/Freewrite.md` on 2026-10-03T18:50:33Z each produced a `crdt` and a `disk` conflict artifact, reason `bound-file-ambiguous-divergence`, on builds that already carry the 7808be6 seeding fix and the a9db183 recovery fix. The recorded lengths are the first seconds of typing in a brand new note: Freewrite went disk 6 / crdt 8, then 23 / 23, then 33 / 35, then 47 / 46, 47 / 54, 56 / 55 across nine seconds, with `amplification-quarantined` firing at 18:50:37. Both sides hold the same prefix of the same sentence at different keystroke counts, so nothing diverged in content; the editor simply matched neither snapshot at the instant of classification. `handleBoundFileSyncGap` defers the `localOnly` branch when `getLastEditorDocChangeForPath` shows recent typing (a9db183), but the ambiguous branch has no equivalent guard and goes straight to preserving both sides.
+**Evidence:** `Notes/Writing/Free Write/Snakes.md` on 2026-09-30T23:14:13Z and `Notes/Writing/Free Write/Freewrite.md` on 2026-10-03T18:50:33Z each produced a `crdt` and a `disk` conflict artifact, reason `bound-file-ambiguous-divergence`. Both notes were created as `Untitled` and renamed while open. In both incidents the disk artifact begins with a newline byte (`0a`) that the CRDT artifact lacks, so the editor and the disk held one character the CRDT never received. An earlier reading of this entry called it keystroke lag with no real divergence; the lengths looked that way (6/8, 23/23, 33/35, 47/46) only because typing continued on top of a one-character offset.
 
-**Required work:**
+**Cause:** Two defects in the rename of an open note.
 
-1. Apply the same recent-doc-change deferral the `localOnly` branch uses before the ambiguous branch may preserve anything, and schedule the same retry so a real conflict is still caught once typing stops.
-2. Decide whether an ambiguous verdict should ever be reachable while the path has an active editor binding, or whether it belongs only to closed files and to bound files that have been idle.
-3. Treat a disk/CRDT pair whose shorter side is a prefix of the longer as lag rather than divergence, independently of the idle window.
-4. Keep the amplification quarantine as the backstop; it fired correctly here and must not be weakened.
-5. Add a regression that types into a newly created note faster than the write debounce and asserts that no artifact is produced, alongside one that proves a genuine two-device ambiguous conflict still is.
+1. Obsidian updates `view.file.path` before the rename batch updates the path map. The binding audit saw `path-changed` and `ytext-mismatch` and forced an unbind and rebind, although the file id and `Y.Text` were unchanged. The rebind waited about 180 ms for the path map, and typing in that window missed the CRDT. `bind` never compared editor text with the `Y.Text` it attached to. The same gap exists after a create, while `bind` waits about 600 ms for the disk seed.
+2. `layout-change` fires before the rename batch flushes and closed the old path in `EditorWorkspaceOrchestrator`, so `onRenameBatchFlushed` had nothing to move and the disk mirror treated the note as closed. Every timestamp stamp then wrote the note to disk under the live editor: 647 of 2,015 stamps between 09-26 and 10-03.
 
-**Closure:** Typing continuously into a new note produces no conflict artifact on any device; a constructed genuine ambiguous conflict still preserves both sides; the new regressions fail before the fix and pass after it.
+**Fix:** A rename of the bound `TFile` keeps its binding (`followRename`). A user edit made while `bind` waits for a `Y.Text` is diffed in before yCollab attaches, with origin `ORIGIN_EDITOR_UNBOUND_CARRY`. `onRenameBatchFlushed` reopens the new path when an earlier sweep closed the old one. Regressions: `tests/client/unbound-edits-and-rename-binding.ts`, `tests/client/rename-keeps-open-tracking.ts`.
+
+**Not done:** Where the leading newline is typed was never observed directly; the likeliest source is the Enter that commits the inline title. The ambiguous branch of `handleBoundFileSyncGap` still has no recent-typing guard. Adding one before this cause was found would have hidden it, so it stays out until a case appears that the fixes above do not cover.
+
+**Closure:** A week of creating and renaming notes on both devices with no artifact, no `binding-rename-in-flight` followed by an unbind, and zero stamps on a "closed" file in the sweep.
 
 ### SYNC-02 — bound-file re-enable can discard one changed side
 

@@ -28,14 +28,23 @@ cat "$V/.obsidian/plugins/og-cloud/logs"/2026-*/*.ndjson | grep -ohE \
 binding-target-gave-up|collab-suspended|Folder already exists|crdt-file-missing-on-disk|\
 amplification-quarantined" | sort | uniq -c
 
-# 3. Does the CRDT agree with itself?
+# 3. Is the mirror writing under a live editor? A stamp is a local user edit,
+#    so a "closed file" line for the same path right before it means the
+#    mirror lost track that the note is open. Prints the number of such stamps.
+cat "$V/.obsidian/plugins/og-cloud/logs"/2026-*/*.ndjson | grep -o \
+  '"msg":"\(afterTxn: remote content change to closed file\|stamper: stamped\) [^(]*' \
+  | awk '/closed file/ { sub(/.*closed file /, ""); sub(/",.*/, ""); prev = $0; next }
+         { sub(/.*stamped /, ""); sub(/ $/, ""); if ($0 == prev) n++; prev = "" }
+         END { print n + 0 }'
+
+# 4. Does the CRDT agree with itself?
 cd ~/.cache/obsidian-profile/og-cloud && node scripts/crdt-health.mjs
 
-# 4. Is the vault still being backed up?
+# 5. Is the vault still being backed up?
 grep -E "^== |^!!" ~/Library/Logs/vault-backup.log | tail -6
 ```
 
-A clean result looks like: no artifacts, no `conflict-artifact-created`, zero duplicate paths and zero `activeWithoutText` from the health scan, and a backup run ending in `done` with no `!!`.
+A clean result looks like: no artifacts, no `conflict-artifact-created`, zero stamps on a "closed" file, zero duplicate paths and zero `activeWithoutText` from the health scan, and a backup run ending in `done` with no `!!`.
 
 ## Where the evidence lives
 
@@ -67,10 +76,11 @@ Always use the plain (redacted) export, never the with-filenames variant. The re
 
 | Symptom | Look here | Usually |
 |---|---|---|
-| `(YAOS conflict - …)` files appear | `conflict-artifact-created` details, then the `divergence` line just before it | See the reason field. `bound-file-ambiguous-divergence` with tiny lengths during typing is `SYNC-03`, not data loss |
+| `(YAOS conflict - …)` files appear | `conflict-artifact-created` details, then the `divergence` line just before it | See the reason field, then `xxd` both artifacts. For `bound-file-ambiguous-divergence` on a new note, a leading `0a` on the disk side that the CRDT side lacks is `SYNC-03`: text typed while the editor had no binding |
 | A note is stale on one device | `scripts/compare-crdt-to-disk.mjs "<path>"` | If they match, the CRDT is fine and the question is the editor or the disk write |
 | A CRDT entry vanished | `meta-remote-active-removed` trace | Another device's orphan GC; the trace names the creating device and whether the path is still on disk |
 | `Folder already exists.` on write | `disk.write.failed` in flight logs | Fixed in og.21. If it returns, something is reading the vault index before it is loaded |
+| Typed text vanishes and comes back | `flushWrite: updated` on the note being typed in, with `afterTxn: remote content change to closed file` before it | The mirror lost track that the note is open and is writing under the editor. Was the note renamed while open? Fixed in 985eb99 |
 | Sync says disconnected but works | nothing; check the status bar instead | The settings row was a snapshot before og.20; it is live now |
 | Version row looks wrong | `.patched` versus the build stamp | A build installed without a reload, or a device never updated |
 | Backup looks incomplete | `~/Library/Logs/vault-backup.log` | See the Proton rules below; `du` understates size by design |
@@ -122,7 +132,7 @@ rsync and `cp` both resist naive sabotage, which makes failure injection harder 
 
 Running `2.1.1-og.21` (`5b04c84`) on the Mac. Open items, with detail in `BACKLOG.md`:
 
-- **`SYNC-03`** — conflict artifacts while typing into a new note. Two incidents, 09-30 and 10-03. The live one.
+- **`SYNC-03`** — conflict artifacts while typing into a new note. Two incidents, 09-30 and 10-03. Fixed in 985eb99 and d0b01c3, awaiting field confirmation.
 - **`COST-01`** — Durable Object stays resident despite `hibernate: true`; about 58% of the included duration allowance, driven by a message floor of roughly one per minute through idle hours.
 - The three `closed-file-*` artifacts of 09-17 were never explained. The plain logs for that day are long pruned; the flight logs recorded `both-changed` and `missing-baseline` verdicts during a day of repeated plugin rebuilds.
 - Upstream carries the stale-seed bug fixed here in 7808be6 and the folder-creation bug fixed in 5b04c84. No patch has been offered upstream.
