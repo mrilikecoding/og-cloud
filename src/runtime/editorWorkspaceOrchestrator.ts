@@ -123,8 +123,30 @@ export class EditorWorkspaceOrchestrator {
 				this.deps.getDiskMirror()?.notifyFileOpened(newPath);
 				this.openFilePaths.add(newPath);
 				this.deps.log(`Rename batch: moved observer "${oldPath}" -> "${newPath}"`);
+			} else if (
+				!this.openFilePaths.has(newPath)
+				&& this.isOpenInMarkdownView(newPath)
+				&& this.deps.isMarkdownPathSyncable(newPath)
+			) {
+				// Obsidian fires layout-change before the rename batch flushes,
+				// and that sweep has already closed oldPath because the view
+				// reports the new path. Nothing is left to move, and the rebind
+				// comes from the binding audit rather than bindView, so without
+				// this the mirror treats the note as closed and writes it to
+				// disk under the live editor.
+				this.deps.getDiskMirror()?.notifyFileOpened(newPath);
+				this.openFilePaths.add(newPath);
+				this.deps.log(`Rename batch: reopened observer for "${newPath}" (closed by an earlier sweep as "${oldPath}")`);
 			}
 		}
+	}
+
+	private isOpenInMarkdownView(path: string): boolean {
+		let open = false;
+		this.deps.app.workspace.iterateAllLeaves((leaf) => {
+			if (leaf.view instanceof MarkdownView && leaf.view.file?.path === path) open = true;
+		});
+		return open;
 	}
 
 	validateOpenBindings(reason: string): void {
