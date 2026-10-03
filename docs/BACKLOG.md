@@ -29,6 +29,22 @@ Each item names current evidence, required work, and closure evidence. Historica
 
 **Closure:** Focused regression fails before the fix and passes after it; re-enable keeps the file absent on the deleting device; the remote device observes the intended delete or an explicitly preserved conflict; unreadable-path and new-device materialization cases remain safe.
 
+### SYNC-03 — ambiguous-divergence files conflicts while a new note is being typed
+
+**State:** Open, reproducing in normal use, two incidents with artifacts on disk.
+
+**Evidence:** `Notes/Writing/Free Write/Snakes.md` on 2026-09-30T23:14:13Z and `Notes/Writing/Free Write/Freewrite.md` on 2026-10-03T18:50:33Z each produced a `crdt` and a `disk` conflict artifact, reason `bound-file-ambiguous-divergence`, on builds that already carry the 7808be6 seeding fix and the a9db183 recovery fix. The recorded lengths are the first seconds of typing in a brand new note: Freewrite went disk 6 / crdt 8, then 23 / 23, then 33 / 35, then 47 / 46, 47 / 54, 56 / 55 across nine seconds, with `amplification-quarantined` firing at 18:50:37. Both sides hold the same prefix of the same sentence at different keystroke counts, so nothing diverged in content; the editor simply matched neither snapshot at the instant of classification. `handleBoundFileSyncGap` defers the `localOnly` branch when `getLastEditorDocChangeForPath` shows recent typing (a9db183), but the ambiguous branch has no equivalent guard and goes straight to preserving both sides.
+
+**Required work:**
+
+1. Apply the same recent-doc-change deferral the `localOnly` branch uses before the ambiguous branch may preserve anything, and schedule the same retry so a real conflict is still caught once typing stops.
+2. Decide whether an ambiguous verdict should ever be reachable while the path has an active editor binding, or whether it belongs only to closed files and to bound files that have been idle.
+3. Treat a disk/CRDT pair whose shorter side is a prefix of the longer as lag rather than divergence, independently of the idle window.
+4. Keep the amplification quarantine as the backstop; it fired correctly here and must not be weakened.
+5. Add a regression that types into a newly created note faster than the write debounce and asserts that no artifact is produced, alongside one that proves a genuine two-device ambiguous conflict still is.
+
+**Closure:** Typing continuously into a new note produces no conflict artifact on any device; a constructed genuine ambiguous conflict still preserves both sides; the new regressions fail before the fix and pass after it.
+
 ### SYNC-02 — bound-file re-enable can discard one changed side
 
 **State:** Open correctness gap with real iPad trace history.
