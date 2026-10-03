@@ -2,13 +2,13 @@ import { Compartment, type Extension } from "@codemirror/state";
 import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { yCollab, ySyncFacet } from "y-codemirror.next";
 import * as Y from "yjs";
-import { editorInfoField, MarkdownView, Notice, type MarkdownFileInfo, type Workspace } from "obsidian";
+import { editorInfoField, MarkdownView, Notice, type MarkdownFileInfo, type TFile, type Workspace } from "obsidian";
 import type { VaultSync } from "./vaultSync";
 import { applyDiffToYText } from "./diff";
 import type { TraceRecord } from "../observability/traceContext";
 import type { ProductFlightPathEventInput } from "../observability/traceSink";
 import { PRODUCT_EVENT_KIND } from "../observability/productEventKinds";
-import { ORIGIN_EDITOR_HEALTH_HEAL } from "./origins";
+import { ORIGIN_EDITOR_HEALTH_HEAL, ORIGIN_EDITOR_UNBOUND_CARRY } from "./origins";
 import { BindingHealthScheduler } from "./bindingHealthScheduler";
 import type { TimestampStamper } from "./timestampStamper";
 
@@ -49,9 +49,14 @@ interface CmResolveFailure {
 }
 
 /** Map from MarkdownView instance id to its binding state. */
+/** CodeMirror user events that change the document. */
+const UNBOUND_USER_EVENTS = ["input", "delete", "move", "undo", "redo"] as const;
+
 interface EditorBinding {
 	view: MarkdownView;
 	path: string;
+	/** The TFile bound; Obsidian renames it in place, so identity survives a rename. */
+	file: TFile | null;
 	undoManager: Y.UndoManager;
 	ytext: Y.Text;
 	cm: EditorView;
@@ -180,6 +185,8 @@ export class EditorBindingManager {
 	private lastCmResolveFailure: CmResolveFailure | null = null;
 
 	private timestampStamper: TimestampStamper | null = null;
+	/** Editors whose bind is waiting for a Y.Text, and whether the user typed meanwhile. */
+	private readonly awaitingTarget = new WeakMap<EditorView, { path: string; userEdited: boolean }>();
 
 	setTimestampStamper(stamper: TimestampStamper | null): void {
 		this.timestampStamper = stamper;
@@ -268,6 +275,10 @@ export class EditorBindingManager {
 		const cmId = this.getCmId(cm);
 		const existing = this.bindings.get(leafId);
 
+		if (existing && this.followRename(existing, file, cm, leafId, "bind") === "pending") {
+			return;
+		}
+
 		if (existing && existing.path === file.path && existing.cm === cm) {
 			const health = this.inspectBindingHealth(view, existing);
 			if (health.healthy) {
@@ -317,6 +328,10 @@ export class EditorBindingManager {
 			"bind",
 		);
 		if (!target) {
+			const awaiting = this.awaitingTarget.get(cm);
+			if (awaiting?.path !== file.path) {
+				this.awaitingTarget.set(cm, { path: file.path, userEdited: false });
+			}
 			return;
 		}
 
@@ -360,6 +375,10 @@ export class EditorBindingManager {
 			return rebound?.path === file.path && rebound.cm === cm;
 		}
 
+		if (this.followRename(existing, file, cm, leafId, `repair:${reason}`) === "pending") {
+			return true;
+		}
+
 		if (existing.path !== file.path || existing.cm !== cm) {
 			this.log(
 				`repair: binding target changed for "${file.path}" ` +
@@ -391,6 +410,51 @@ export class EditorBindingManager {
 			existing,
 			reason,
 		});
+	}
+
+	/**
+	 * Obsidian renames a TFile in place and updates view.file.path before the
+	 * rename batch updates the path map. In that window the binding looks like
+	 * it points at another note (path-changed, ytext-mismatch) although the
+	 * file and its Y.Text are the ones already bound. Unbinding here opens a
+	 * gap in which keystrokes reach the editor but not the CRDT.
+	 *
+	 * "pending": the path map has not caught up; keep the binding as it is.
+	 * "adopted": the new path already resolves to the bound Y.Text.
+	 */
+	private followRename(
+		existing: EditorBinding,
+		file: TFile,
+		cm: EditorView,
+		leafId: string,
+		source: string,
+	): "none" | "pending" | "adopted" {
+		if (existing.path === file.path) return "none";
+		if (existing.cm !== cm || existing.file !== file) return "none";
+
+		const renamedText = this.vaultSync.getTextForPath(file.path);
+		if (renamedText === existing.ytext) {
+			this.log(
+				`${source}: bound note renamed "${existing.path}" -> "${file.path}" ` +
+				`(leaf=${leafId}) — keeping binding`,
+			);
+			existing.path = file.path;
+			return "adopted";
+		}
+		if (!renamedText && this.vaultSync.getTextForPath(existing.path) === existing.ytext) {
+			this.log(
+				`${source}: rename in flight "${existing.path}" -> "${file.path}" ` +
+				`(leaf=${leafId}) — keeping binding until the path map catches up`,
+			);
+			this.trace?.("editor", "binding-rename-in-flight", {
+				leafId,
+				oldPath: existing.path,
+				newPath: file.path,
+				source,
+			});
+			return "pending";
+		}
+		return "none";
 	}
 
 	heal(view: MarkdownView, deviceName: string, reason: string): boolean {
@@ -1172,9 +1236,56 @@ export class EditorBindingManager {
 		};
 	}
 
+	/**
+	 * While bind waits for a Y.Text the editor has no yCollab, so typing
+	 * reaches the editor and, via autosave, the disk, but not the CRDT. Diff
+	 * it in before yCollab attaches (after would mirror it back into the
+	 * editor). Only user edits count, and only for the path that was waiting:
+	 * a document Obsidian loaded into the editor is disk text and may be
+	 * older than the CRDT.
+	 */
+	private carryUnboundEdits(
+		view: MarkdownView,
+		cm: EditorView,
+		filePath: string,
+		ytext: Y.Text,
+	): void {
+		const awaiting = this.awaitingTarget.get(cm);
+		this.awaitingTarget.delete(cm);
+		if (!awaiting?.userEdited || awaiting.path !== filePath) return;
+
+		const editorContent = view.editor.getValue();
+		const crdtContent = ytext.toJSON();
+		if (editorContent === crdtContent) return;
+
+		this.log(
+			`bind: carrying unbound edits into "${filePath}" ` +
+			`(${crdtContent.length} -> ${editorContent.length} chars)`,
+		);
+		this.trace?.("editor", "binding-unbound-edits-carried", {
+			path: filePath,
+			crdtLength: crdtContent.length,
+			editorLength: editorContent.length,
+		});
+		applyDiffToYText(ytext, crdtContent, editorContent, ORIGIN_EDITOR_UNBOUND_CARRY);
+	}
+
+	private noteUnboundEditorUpdate(update: ViewUpdate): void {
+		if (!update.docChanged) return;
+		const awaiting = this.awaitingTarget.get(update.view);
+		if (!awaiting) return;
+		// A doc change that is not a user event is Obsidian loading a document.
+		awaiting.userEdited = update.transactions.some((tr) =>
+			tr.docChanged && UNBOUND_USER_EVENTS.some((event) => tr.isUserEvent(event)),
+		);
+	}
+
 	private handleLiveEditorUpdate(update: ViewUpdate): void {
 		const match = this.findBindingForCm(update.view);
-		if (!match) return;
+		if (!match) {
+			this.noteUnboundEditorUpdate(update);
+			return;
+		}
 		if (update.docChanged) {
 			const now = Date.now();
 			match.binding.lastEditorChangeAtMs = now;
@@ -1358,6 +1469,8 @@ export class EditorBindingManager {
 			reason,
 		} = options;
 
+		if (action === "bind") this.carryUnboundEdits(view, cm, filePath, ytext);
+
 		const undoManager = this.createUndoManager(ytext);
 
 		this.vaultSync.provider.awareness.setLocalStateField("user", {
@@ -1399,6 +1512,7 @@ export class EditorBindingManager {
 		this.bindings.set(leafId, {
 			view,
 			path: filePath,
+			file: view.file,
 			undoManager,
 			ytext,
 			cm,

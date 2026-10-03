@@ -16,6 +16,12 @@ export const ORIGIN_DISK_SYNC = "disk-sync" as const;
 export const ORIGIN_DISK_SYNC_RECOVER_BOUND = "disk-sync-recover-bound" as const;
 export const ORIGIN_DISK_SYNC_OPEN_IDLE_RECOVER = "disk-sync-open-idle-recover" as const;
 export const ORIGIN_EDITOR_HEALTH_HEAL = "editor-health-heal" as const;
+/**
+ * Typing that reached the editor while bind was waiting for a Y.Text, diffed
+ * in by EditorBindingManager just before yCollab attaches. Local: the editor
+ * already holds the text and its autosave writes it.
+ */
+export const ORIGIN_EDITOR_UNBOUND_CARRY = "editor-unbound-carry" as const;
 
 /**
  * Timestamp stamper edits to `created:` / `modified:` frontmatter.
@@ -41,6 +47,7 @@ const LOCAL_STRING_ORIGIN_SET = new Set<string>([
 	ORIGIN_DISK_SYNC_RECOVER_BOUND,
 	ORIGIN_DISK_SYNC_OPEN_IDLE_RECOVER,
 	ORIGIN_EDITOR_HEALTH_HEAL,
+	ORIGIN_EDITOR_UNBOUND_CARRY,
 	ORIGIN_RESTORE,
 ]);
 
