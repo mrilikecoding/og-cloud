@@ -30,14 +30,25 @@ export type RemoteDeleteDecision =
  *   - Remote-only writes (skip local yCollab/seed/disk-sync origins)
  *   - Lazy per-file Y.Text observers
  *   - Concurrency-limited write queue (prevents burst I/O on git pull)
- *   - Loop suppression via timed path suppression
+ *   - Loop suppression: every write is fingerprinted, and the vault event
+ *     that matches one is ours (time only garbage-collects the entries)
  */
 
 const DEBOUNCE_MS = 300;
 const DEBOUNCE_BURST_MS = 1000;
 const OPEN_FILE_IDLE_MS = 1500;
 const OPEN_FILE_ACTIVE_GRACE_MS = 1200;
-const SUPPRESS_MS = 500;
+/**
+ * How long a write's fingerprint stays eligible to acknowledge its own vault
+ * event. Obsidian's modify event arrives about 360 ms after the write on the
+ * Mac (p50 over four days, p90 450 ms); a 500 ms window let the slow ones
+ * through as "external edits", and importing that stale copy deleted the
+ * other device's newest keystrokes. The fingerprint is the identity, so a
+ * long window costs nothing but memory.
+ */
+const SUPPRESS_MS = 30_000;
+/** Writes remembered per path; the echo of an older one is superseded anyway. */
+const MAX_SUPPRESSION_ENTRIES_PER_PATH = 16;
 const MAX_CONCURRENT_WRITES = 5;
 const BURST_THRESHOLD = 20;
 
@@ -65,7 +76,8 @@ function hashPrefix(hash: string | null | undefined): string | null {
 }
 
 export class DiskMirror {
-	private suppressedPaths = new Map<string, SuppressionEntry>();
+	/** Recent writes and deletes per path, oldest first. */
+	private suppressedPaths = new Map<string, SuppressionEntry[]>();
 	private openPaths = new Set<string>();
 
 	/**
@@ -1025,11 +1037,12 @@ export class DiskMirror {
 
 	consumeDeleteSuppression(path: string): boolean {
 		path = normalizePath(path);
-		const entry = this.getActiveSuppression(path);
-		if (!entry) return false;
+		const entries = this.getActiveSuppressions(path);
+		const index = entries.findIndex((entry) => entry.kind === "delete");
+		if (index === -1) return false;
 
-		this.suppressedPaths.delete(path);
-		return entry.kind === "delete";
+		this.consumeSuppression(path, index);
+		return true;
 	}
 
 	/**
@@ -1300,22 +1313,55 @@ export class DiskMirror {
 		void this.kickDrain();
 	}
 
-	private getActiveSuppression(path: string): SuppressionEntry | null {
+	/** Unexpired entries for a path, oldest first. Prunes as it goes. */
+	private getActiveSuppressions(path: string): SuppressionEntry[] {
 		path = normalizePath(path);
-		const entry = this.suppressedPaths.get(path);
-		if (!entry) return null;
-		if (Date.now() < entry.expiresAt) {
-			return entry;
+		const entries = this.suppressedPaths.get(path);
+		if (!entries) return [];
+		const now = Date.now();
+		const active = entries.filter((entry) => now < entry.expiresAt);
+		if (active.length === 0) {
+			this.suppressedPaths.delete(path);
+		} else if (active.length !== entries.length) {
+			this.suppressedPaths.set(path, active);
 		}
-		this.suppressedPaths.delete(path);
-		return null;
+		return active;
+	}
+
+	private getActiveSuppression(path: string): SuppressionEntry | null {
+		const entries = this.getActiveSuppressions(path);
+		return entries.length > 0 ? entries[entries.length - 1]! : null;
+	}
+
+	private addSuppression(path: string, entry: SuppressionEntry): void {
+		path = normalizePath(path);
+		const entries = this.getActiveSuppressions(path);
+		entries.push(entry);
+		while (entries.length > MAX_SUPPRESSION_ENTRIES_PER_PATH) entries.shift();
+		this.suppressedPaths.set(path, entries);
+	}
+
+	/**
+	 * The event for entry `index` has arrived. Vault events come in order, so
+	 * anything older has either been seen or will never be; drop it too.
+	 */
+	private consumeSuppression(path: string, index: number): void {
+		path = normalizePath(path);
+		const entries = this.suppressedPaths.get(path);
+		if (!entries) return;
+		const remaining = entries.slice(index + 1);
+		if (remaining.length === 0) {
+			this.suppressedPaths.delete(path);
+		} else {
+			this.suppressedPaths.set(path, remaining);
+		}
 	}
 
 	private async suppressWrite(path: string, content: string): Promise<void> {
 		// Record the exact content we wrote so vault modify/create events can
 		// acknowledge our own write by observed state, not just timing.
 		const fingerprint = await this.fingerprintContent(content);
-		this.suppressedPaths.set(normalizePath(path), {
+		this.addSuppression(path, {
 			kind: "write",
 			expiresAt: Date.now() + SUPPRESS_MS,
 			expectedBytes: fingerprint.bytes,
@@ -1324,7 +1370,7 @@ export class DiskMirror {
 	}
 
 	private suppressDelete(path: string): void {
-		this.suppressedPaths.set(normalizePath(path), {
+		this.addSuppression(path, {
 			kind: "delete",
 			expiresAt: Date.now() + SUPPRESS_MS,
 		});
@@ -1335,16 +1381,18 @@ export class DiskMirror {
 		event: "modify" | "create",
 	): Promise<boolean> {
 		const path = normalizePath(file.path);
-		const entry = this.getActiveSuppression(path);
-		if (!entry) return false;
+		const entries = this.getActiveSuppressions(path);
+		if (entries.length === 0) return false;
 
-		if (entry.kind !== "write") {
+		const writes = entries.filter((entry) => entry.kind === "write");
+		if (writes.length === 0) {
+			// Only a pending delete: this event is not ours.
 			this.suppressedPaths.delete(path);
 			this.log(`suppression: "${path}" ${event} did not match pending delete`);
 			this.trace?.("disk", "suppression-mismatch", {
 				path,
 				event,
-				expectedKind: entry.kind,
+				expectedKind: "delete",
 				observedKind: "write",
 				reason: "kind-mismatch",
 			});
@@ -1356,27 +1404,30 @@ export class DiskMirror {
 				source: "diskMirror",
 				layer: "disk",
 				path,
-				data: { event, reason: "kind-mismatch", expectedKind: entry.kind },
+				data: { event, reason: "kind-mismatch", expectedKind: "delete" },
 			});
 			return false;
 		}
 
-		if (
-			typeof file.stat?.size === "number"
-			&& typeof entry.expectedBytes === "number"
-			&& file.stat.size !== entry.expectedBytes
-		) {
-			this.suppressedPaths.delete(path);
+		const newest = writes[writes.length - 1]!;
+		const observedBytes = typeof file.stat?.size === "number" ? file.stat.size : null;
+		const sizeCandidates = observedBytes === null
+			? writes
+			: writes.filter((entry) => entry.expectedBytes === observedBytes);
+		if (sizeCandidates.length === 0) {
+			// An external edit. Our own echoes are still pending and keep their
+			// entries; the next event may be one of them.
 			this.log(
 				`suppression: "${path}" ${event} size mismatch ` +
-				`(expected=${entry.expectedBytes}, observed=${file.stat.size})`,
+				`(expected=${writes.map((entry) => entry.expectedBytes).join("|")}, observed=${observedBytes})`,
 			);
 			this.trace?.("disk", "suppression-mismatch", {
 				path,
 				event,
-				expectedKind: entry.kind,
-				expectedBytes: entry.expectedBytes,
-				observedBytes: file.stat.size,
+				expectedKind: "write",
+				expectedBytes: newest.expectedBytes,
+				observedBytes,
+				pendingWrites: writes.length,
 				reason: "size-mismatch",
 			});
 			this._flightEventHandler?.({
@@ -1390,8 +1441,8 @@ export class DiskMirror {
 				data: {
 					event,
 					reason: "size-mismatch",
-					expectedBytes: entry.expectedBytes,
-					observedBytes: file.stat.size,
+					expectedBytes: newest.expectedBytes,
+					observedBytes,
 				},
 			});
 			return false;
@@ -1402,18 +1453,20 @@ export class DiskMirror {
 			// keeps the hot path cheap while making self-event detection causal.
 			const content = await this.app.vault.read(file);
 			const fingerprint = await this.fingerprintContent(content);
-			if (
-				fingerprint.bytes === entry.expectedBytes
-				&& fingerprint.hash === entry.expectedHash
-			) {
-				this.suppressedPaths.delete(path);
+			const match = sizeCandidates.find((entry) =>
+				fingerprint.bytes === entry.expectedBytes && fingerprint.hash === entry.expectedHash,
+			);
+			if (match) {
+				this.consumeSuppression(path, entries.indexOf(match));
 				this.log(`suppression: acknowledged "${path}" ${event}`);
 				this.trace?.("disk", "suppression-acknowledged", {
 					path,
 					event,
-					kind: entry.kind,
-					expectedBytes: entry.expectedBytes,
-					expectedHashPrefix: hashPrefix(entry.expectedHash),
+					kind: match.kind,
+					expectedBytes: match.expectedBytes,
+					expectedHashPrefix: hashPrefix(match.expectedHash),
+					supersededWrites: writes.indexOf(match),
+					newerWritesPending: writes.length - 1 - writes.indexOf(match),
 				});
 				return true;
 			}
@@ -1421,21 +1474,21 @@ export class DiskMirror {
 			this.trace?.("disk", "suppression-mismatch", {
 				path,
 				event,
-				expectedKind: entry.kind,
+				expectedKind: "write",
 				reason: "read-failed",
 				error: formatUnknown(err),
 			});
 			// If the file cannot be read here, fall through and let normal sync handle it.
 		}
 
-		this.suppressedPaths.delete(path);
 		this.log(`suppression: "${path}" ${event} fingerprint mismatch`);
 		this.trace?.("disk", "suppression-mismatch", {
 			path,
 			event,
-			expectedKind: entry.kind,
-			expectedBytes: entry.expectedBytes,
-			expectedHashPrefix: hashPrefix(entry.expectedHash),
+			expectedKind: "write",
+			expectedBytes: newest.expectedBytes,
+			expectedHashPrefix: hashPrefix(newest.expectedHash),
+			pendingWrites: writes.length,
 			reason: "fingerprint-mismatch",
 		});
 		this._flightEventHandler?.({
@@ -1449,8 +1502,8 @@ export class DiskMirror {
 			data: {
 				event,
 				reason: "fingerprint-mismatch",
-				expectedBytes: entry.expectedBytes,
-				expectedHashPrefix: hashPrefix(entry.expectedHash),
+				expectedBytes: newest.expectedBytes,
+				expectedHashPrefix: hashPrefix(newest.expectedHash),
 			},
 		});
 		return false;
