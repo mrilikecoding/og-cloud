@@ -29,6 +29,28 @@ Each item names current evidence, required work, and closure evidence. Historica
 
 **Closure:** Focused regression fails before the fix and passes after it; re-enable keeps the file absent on the deleting device; the remote device observes the intended delete or an explicitly preserved conflict; unreadable-path and new-device materialization cases remain safe.
 
+### SYNC-05 — a note opened with a stale disk copy is typed into before the editor sees the CRDT
+
+**State:** Open, one incident with artifacts, fix not started.
+
+**Evidence:** `Notes/Writing/Free Write/Orphan.md`, 2026-10-07T00:17:05Z, on og.22. The previous Mac session ended at 00:16:35 mid-typing (its last 15 characters reached the CRDT but not disk, Obsidian's autosave never ran). The new boot's reconcile correctly found `1 need disk update` for the open note and deferred the write because the note was open; `bind` then attached yCollab with the editor showing the stale disk text (5651) and the Y.Text 15 characters longer (5666). The user typed into that editor, yCollab applied the keystrokes at editor offsets into a longer Y.Text, and 7 s later the classifier saw editor ≠ disk ≠ CRDT and preserved both sides. The CRDT artifact carries `who my motmother and`, a garbled splice; the final note is intact only because the deferred write later replaced the editor text.
+
+**Cause:** nothing brings the editor to the CRDT before yCollab attaches when the disk copy is behind. The open-file write path handles it eventually, but it is deferred 1.5 s after bind (`lastEditorChangeAtMs` is set to bind time) and relies on Obsidian reloading the editor from disk, which races with typing.
+
+**Fix direction:** when reconcile schedules a CRDT-to-disk update for an open path, keep the disk snapshot it compared against. In `bind`, if the editor text equals that snapshot and differs from the Y.Text, dispatch the Y.Text content into the editor as one CM change before the collab extension is applied, so y-codemirror does not echo it back. If the editor already differs from the snapshot the user typed during startup; leave it to the local-only recovery. Touches reconciliation, DiskMirror and EditorBindingManager.
+
+**Closure:** restart Obsidian mid-sentence with the note open, type immediately on reopen, no artifact and the sentence is intact on both devices.
+
+### SYNC-04 — the mirror re-imported its own late disk writes and deleted the other device's keystrokes
+
+**State:** Fixed in 5f1db4e (og.23), awaiting field confirmation.
+
+**Evidence:** Mac log 2026-10-06T03:35:56 to 03:36:01 while the phone typed into `Notes/Rayna/Rayna Sleep Log.md`, closed on the Mac: `flushWrite: updated (483)`, 1.02 s later `syncFileFromDisk: applying diff (485 -> 483)`, then `flushWrite (485)`, `applying diff (484 -> 485)`, `flushWrite (484)`, four cycles. The phone trace for the same seconds shows `recovery.decision bound-file-local-only-divergence` repairing 485 -> 486 and `editor.repair.applied`. The user sees this as text that disappears and comes back.
+
+**Cause:** write suppression was one entry per path expiring 500 ms after the write. Obsidian's modify event for the mirror's own write arrives 360 ms later at the median and 450 ms at p90 (10-03 to 10-06, 273 acknowledged writes), so the slow ones crossed the window and were imported as external edits of a closed file, diffing a stale copy into a CRDT the phone had moved on from. A second write to the same path also replaced the entry, so the first write's echo met the wrong fingerprint.
+
+**Fix:** entries are a per-path list kept for 30 s and consumed by fingerprint match; an external edit in between no longer discards pending echoes. Regression: `tests/client/disk-mirror-write-echo.ts`.
+
 ### SYNC-03 — conflict artifacts while a new note is being typed
 
 **State:** Fixed in 985eb99 and d0b01c3, not yet confirmed in the field.

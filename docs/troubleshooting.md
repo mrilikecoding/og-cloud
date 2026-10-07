@@ -80,6 +80,7 @@ Always use the plain (redacted) export, never the with-filenames variant. The re
 | A note is stale on one device | `scripts/compare-crdt-to-disk.mjs "<path>"` | If they match, the CRDT is fine and the question is the editor or the disk write |
 | A CRDT entry vanished | `meta-remote-active-removed` trace | Another device's orphan GC; the trace names the creating device and whether the path is still on disk |
 | `Folder already exists.` on write | `disk.write.failed` in flight logs | Fixed in og.21. If it returns, something is reading the vault index before it is loaded |
+| Text typed on the phone vanishes and comes back | Mac log: `syncFileFromDisk: applying diff` on a closed note within seconds of the Mac's own `flushWrite` for it | `SYNC-04`, fixed in og.23: the mirror's own write echo arrived after the suppression window and was imported as an external edit |
 | Typed text vanishes and comes back | `flushWrite: updated` on the note being typed in, with `afterTxn: remote content change to closed file` before it | The mirror lost track that the note is open and is writing under the editor. Was the note renamed while open? Fixed in 985eb99 |
 | Sync says disconnected but works | nothing; check the status bar instead | The settings row was a snapshot before og.20; it is live now |
 | Version row looks wrong | `.patched` versus the build stamp | A build installed without a reload, or a device never updated |
@@ -130,9 +131,11 @@ rsync and `cp` both resist naive sabotage, which makes failure injection harder 
 
 ## State as of 2026-10-03
 
-Running `2.1.1-og.21` (`5b04c84`) on the Mac. Open items, with detail in `BACKLOG.md`:
+Running `2.1.1-og.23` (`5f1db4e`) on the Mac. Open items, with detail in `BACKLOG.md`:
 
-- **`SYNC-03`** — conflict artifacts while typing into a new note. Two incidents, 09-30 and 10-03. Fixed in 985eb99 and d0b01c3, awaiting field confirmation.
+- **`SYNC-03`** — conflict artifacts while typing into a new note. Fixed in og.22, awaiting field confirmation.
+- **`SYNC-04`** — late write echoes re-imported, deleting the phone's keystrokes. Fixed in og.23, awaiting field confirmation.
+- **`SYNC-05`** — stale editor typed into after a restart with the note open (Orphan.md, 10-07). Open; the next thing to pick up.
 - **`COST-01`** — Durable Object stays resident despite `hibernate: true`; about 58% of the included duration allowance, driven by a message floor of roughly one per minute through idle hours.
 - The three `closed-file-*` artifacts of 09-17 were never explained. The plain logs for that day are long pruned; the flight logs recorded `both-changed` and `missing-baseline` verdicts during a day of repeated plugin rebuilds.
 - Upstream carries the stale-seed bug fixed here in 7808be6 and the folder-creation bug fixed in 5b04c84. No patch has been offered upstream.
