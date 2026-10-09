@@ -1,13 +1,7 @@
-import { parseNote } from "./frontmatter.mjs";
+import { parseNote, tagList } from "./frontmatter.mjs";
 import { requestName, resultPath } from "./paths.mjs";
 import { resultNote } from "./resultNote.mjs";
 import { createFile, liveFiles, textOf } from "./vault.mjs";
-
-/** Frontmatter `tags` as a list of bare names: accepts a list or a comma/space separated string. */
-function tagList(tags) {
-	const raw = Array.isArray(tags) ? tags : typeof tags === "string" ? tags.split(/[,\s]+/) : [];
-	return raw.filter((t) => typeof t === "string").map((t) => t.replace(/^#/, "").trim());
-}
 
 /**
  * The request loop over a Y.Doc. No socket in here: the caller feeds it a doc

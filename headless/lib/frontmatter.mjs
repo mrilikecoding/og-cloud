@@ -15,3 +15,9 @@ export function parseNote(text) {
 	}
 	return { frontmatter, body: text.slice(m[0].length) };
 }
+
+/** Frontmatter `tags` as a list of bare names: accepts a list or a comma/space separated string. */
+export function tagList(tags) {
+	const raw = Array.isArray(tags) ? tags : typeof tags === "string" ? tags.split(/[,\s]+/) : [];
+	return raw.filter((t) => typeof t === "string").map((t) => t.replace(/^#/, "").trim());
+}
