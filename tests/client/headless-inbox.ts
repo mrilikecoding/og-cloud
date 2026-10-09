@@ -13,6 +13,7 @@ import * as Y from "yjs";
 import { createInbox } from "../../headless/lib/inbox.mjs";
 import { parseNote as parseNoteJs } from "../../headless/lib/frontmatter.mjs";
 import { requestName, resultPath } from "../../headless/lib/paths.mjs";
+import { composeGardenRequest, gardenIfDue } from "../../headless/lib/gardener.mjs";
 import { shutdown } from "../../headless/lib/shutdown.mjs";
 import { resultNote } from "../../headless/lib/resultNote.mjs";
 import { createFile, liveFiles, textOf } from "../../headless/lib/vault.mjs";
@@ -418,6 +419,80 @@ s.test("shutdown gives up after the timeout and disconnects anyway", async () =>
 	});
 	s.check(disconnected, "disconnected after the timeout");
 	s.check(Date.now() - t0 < 1000, "did not wait for the stuck run");
+});
+
+function noteAt(ydoc: Y.Doc, path: string, text: string, mtime: number): void {
+	const id = createFile(ydoc, path, text, "laptop");
+	const entry = ydoc.getMap("meta").get(id) as Y.Map<unknown>;
+	entry.set("mtime", mtime);
+}
+
+const NOW = new Date(2026, 9, 9, 3, 0, 0); // local time, 03:00
+const HOUR = 3_600_000;
+const gardenCfg = { ...cfg, ensemble: "vault-gardener" };
+
+s.section("Test 6: gardener request composer");
+{
+	const ydoc = new Y.Doc();
+	noteAt(ydoc, "daily/today.md", "fresh note", NOW.getTime() - 2 * HOUR);
+	noteAt(ydoc, "daily/old.md", "stale note", NOW.getTime() - 25 * HOUR);
+	noteAt(ydoc, "long.md", "x".repeat(2000), NOW.getTime() - HOUR);
+	noteAt(ydoc, "inbox/req.md", "---\nagent: e\n---\nask", NOW.getTime() - HOUR);
+	noteAt(ydoc, "results/res.md", "result", NOW.getTime() - HOUR);
+	noteAt(ydoc, "tagged.md", "---\ntags: [agent]\n---\nagent output", NOW.getTime() - HOUR);
+	noteAt(ydoc, "image-note.txt", "not markdown", NOW.getTime() - HOUR);
+	const tomb = new Y.Map<unknown>();
+	tomb.set("path", "deleted.md");
+	tomb.set("mtime", NOW.getTime() - HOUR);
+	tomb.set("deletedAt", NOW.getTime() - HOUR);
+	ydoc.getMap("meta").set("tomb", tomb);
+
+	const req = composeGardenRequest({ ydoc, now: NOW, cfg: gardenCfg });
+	s.check(req !== null && req.path === "inbox/garden-2026-10-09.md", "path carries the local date");
+	const parsed = parseNote(req?.text ?? "");
+	s.check(parsed.error === undefined && parsed.frontmatter.agent === "vault-gardener", "frontmatter names the ensemble");
+	s.check(parsed.body.includes("daily/today.md\nfresh note"), "recent note: path then text");
+	s.check(!parsed.body.includes("daily/old.md"), "note older than 24 h left out");
+	s.check(!parsed.body.includes("inbox/req.md") && !parsed.body.includes("results/res.md"), "inbox/ and results/ left out");
+	s.check(!parsed.body.includes("tagged.md"), "agent-tagged note left out");
+	s.check(!parsed.body.includes("image-note.txt"), "non-markdown left out");
+	s.check(!parsed.body.includes("deleted.md"), "tombstone left out");
+	s.check(parsed.body.includes("long.md\n" + "x".repeat(1500) + "\n"), "text cut to 1500 chars");
+	s.check(!parsed.body.includes("x".repeat(1501)), "nothing past 1500 chars");
+	s.check(parsed.body.split("\n---\n").length === 2, "entries separated by --- lines");
+
+	const custom = composeGardenRequest({ ydoc, now: NOW, cfg: { ...gardenCfg, ensemble: "other" } });
+	s.check(parseNote(custom?.text ?? "").frontmatter.agent === "other", "ensemble is configurable");
+
+	const quiet = new Y.Doc();
+	noteAt(quiet, "old.md", "old", NOW.getTime() - 30 * HOUR);
+	s.check(composeGardenRequest({ ydoc: quiet, now: NOW, cfg: gardenCfg }) === null, "nothing recent: no request");
+}
+
+s.section("Test 7: gardenIfDue schedule");
+{
+	const ydoc = new Y.Doc();
+	noteAt(ydoc, "a.md", "recent", NOW.getTime() - HOUR);
+	const wrongHour = gardenIfDue({ ydoc, now: new Date(2026, 9, 9, 4, 0, 0), hour: 3, cfg: gardenCfg });
+	s.check(wrongHour === null, "outside the hour: nothing created");
+	s.check(!liveFiles(ydoc).has("inbox/garden-2026-10-09.md"), "no note at the wrong hour");
+
+	const first = gardenIfDue({ ydoc, now: NOW, hour: 3, cfg: gardenCfg });
+	s.check(first === "inbox/garden-2026-10-09.md", "creates the note at the hour");
+	s.check(liveFiles(ydoc).has("inbox/garden-2026-10-09.md"), "note is live in the doc");
+	const again = gardenIfDue({ ydoc, now: new Date(2026, 9, 9, 3, 30, 0), hour: 3, cfg: gardenCfg });
+	s.check(again === null, "second tick the same day: skipped, note exists");
+	s.check(ydoc.getMap("idToText").size === 2, "exactly one garden note was added");
+}
+
+s.test("the ordinary loop runs a garden request", async () => {
+	const ydoc = new Y.Doc();
+	noteAt(ydoc, "a.md", "recent", NOW.getTime() - HOUR);
+	gardenIfDue({ ydoc, now: NOW, hour: 3, cfg: gardenCfg });
+	const { inbox, calls } = countingInbox(ydoc);
+	await inbox.scan();
+	s.check(calls.length === 1 && calls[0] === "vault-gardener", "vault-gardener ran once");
+	s.check(resultText(ydoc, "garden-2026-10-09") !== null, "result note written");
 });
 
 await s.done();
