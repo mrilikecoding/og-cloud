@@ -249,4 +249,30 @@ s.test("a request with invalid frontmatter gets an error note without a run", as
 	s.check(text !== null && parseNote(text).frontmatter.status === "error", "error note written");
 });
 
+s.test("a re-sync mid-run does not start a second run", async () => {
+	const ydoc = new Y.Doc();
+	request(ydoc, "slow", "vault-gardener");
+	let calls = 0;
+	let release: (v: unknown) => void = () => {};
+	const inbox = createInbox({
+		ydoc,
+		cfg,
+		run: () => {
+			calls++;
+			return new Promise((resolve) => {
+				release = resolve;
+			});
+		},
+	});
+	const first = inbox.scan();
+	// a reconnect re-syncs the doc and triggers more scans while the run is open
+	const again = inbox.scan();
+	const thirdTime = inbox.scan();
+	s.check(calls === 1, "one run started across repeated scans");
+	release({ status: "completed", deliverable: "late" });
+	await Promise.all([first, again, thirdTime]);
+	s.check(calls === 1, "still one run after it finishes");
+	s.check(resultText(ydoc, "slow") !== null, "result written once");
+});
+
 await s.done();
