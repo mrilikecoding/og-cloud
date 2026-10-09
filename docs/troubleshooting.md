@@ -10,6 +10,17 @@ Version confusion wasted hours before the build stamp existed.
 
 - `cat "$VAULT/.obsidian/plugins/og-cloud/.patched"` names the upstream base, fork branch, commit and build time of the installed bundle.
 - Settings → OG-cloud → Plugin version reads `2.1.1 (build <commit>, <branch>, <time> UTC)` from og.20 onward. `manifest.json` stays at upstream's `2.1.1` on every build, so the version alone tells you nothing.
+- **An installed build is not a running build.** `build.sh` and `obsidian-profile sync` only put files on disk; the plugin keeps running the old code until it is reloaded. og.23 sat installed but unloaded on the Mac for two days (2026-10-07 to 10-09) while the bug it fixed kept firing. Check whether the current session predates the install:
+
+  ```sh
+  V=~/Vaults/Svalbard
+  built=$(sed -n 's/^built=//p' "$V/.obsidian/plugins/og-cloud/.patched")
+  boot=$(ls -t "$V/.obsidian/plugins/og-cloud/logs"/2026-*/boot-*[!e].ndjson | head -1 | xargs basename | sed 's/\.ndjson//')
+  started=$(ls "$V/.obsidian/plugins/og-cloud/logs"/2026-*/$boot.ndjson | sort | head -1 | xargs head -1 | grep -o '"ts":"[^"]*"' | cut -d'"' -f4)
+  echo "installed $built, running since $started"
+  [[ "$started" > "$built" ]] && echo OK || echo "STALE: reload the plugin"
+  ```
+
 - **A device's plugin version cannot be determined from another device.** It is only a local IndexedDB scope key and never enters the shared document; `sys` holds only `schemaVersion`, `schemaUpdatedAt`, `schemaUpdatedBy`, `initialized`, `lastSync`. Read it on the device in question.
 
 ## The five-minute sweep
