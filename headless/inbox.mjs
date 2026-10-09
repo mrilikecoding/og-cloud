@@ -10,6 +10,7 @@ import * as Y from "yjs";
 import YProvider from "y-partyserver/provider";
 import { createInbox } from "./lib/inbox.mjs";
 import { runEnsemble } from "./lib/llmOrc.mjs";
+import { shutdown } from "./lib/shutdown.mjs";
 import { liveFiles } from "./lib/vault.mjs";
 
 const cfg = {
@@ -62,12 +63,22 @@ provider.on("synced", () => {
 meta.observeDeep(scheduleScan);
 idToText.observeDeep(scheduleScan);
 
+let stopping = false;
 for (const sig of ["SIGINT", "SIGTERM"]) {
 	process.on(sig, () => {
-		log(`${sig}: disconnecting`);
-		provider.disconnect();
-		provider.destroy();
-		process.exit(0);
+		if (stopping) return;
+		stopping = true;
+		log(`${sig}: waiting up to 10 s for in-flight results`);
+		void shutdown({
+			inbox,
+			log,
+			timeoutMs: 10_000,
+			disconnect: () => {
+				provider.disconnect();
+				provider.destroy();
+				process.exit(0);
+			},
+		});
 	});
 }
 

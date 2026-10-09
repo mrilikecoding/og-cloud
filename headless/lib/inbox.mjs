@@ -3,6 +3,12 @@ import { requestName, resultPath } from "./paths.mjs";
 import { resultNote } from "./resultNote.mjs";
 import { createFile, liveFiles, textOf } from "./vault.mjs";
 
+/** Frontmatter `tags` as a list of bare names: accepts a list or a comma/space separated string. */
+function tagList(tags) {
+	const raw = Array.isArray(tags) ? tags : typeof tags === "string" ? tags.split(/[,\s]+/) : [];
+	return raw.filter((t) => typeof t === "string").map((t) => t.replace(/^#/, "").trim());
+}
+
 /**
  * The request loop over a Y.Doc. No socket in here: the caller feeds it a doc
  * and calls `scan()` when the doc changes.
@@ -11,6 +17,7 @@ import { createFile, liveFiles, textOf } from "./vault.mjs";
  */
 export function createInbox({ ydoc, cfg, run, log = () => {} }) {
 	const inFlight = new Set();
+	const pending = new Set(); // handler promises, from claim to result write
 
 	async function handleRequest(path, fileId) {
 		const name = requestName(path, cfg.inboxDir);
@@ -19,6 +26,13 @@ export function createInbox({ ydoc, cfg, run, log = () => {} }) {
 		const { frontmatter, body, error: fmError } = parseNote(text);
 		const ensemble = typeof frontmatter.agent === "string" ? frontmatter.agent.trim() : null;
 		if (!ensemble && !fmError) return; // not a request (or not finished being typed)
+		if (!fmError) {
+			// Agent output is never a request, so results cannot feed the loop.
+			if (tagList(frontmatter.tags).includes("agent")) return;
+			// A named runner is a claim: only that device takes the request.
+			const runner = typeof frontmatter.runner === "string" ? frontmatter.runner.trim() : "";
+			if (runner && runner !== cfg.device) return;
+		}
 
 		inFlight.add(path);
 		const startedAt = new Date();
@@ -64,12 +78,30 @@ export function createInbox({ ydoc, cfg, run, log = () => {} }) {
 		const started = [];
 		for (const [path, fileId] of files) {
 			if (!path.startsWith(cfg.inboxDir) || !path.endsWith(".md")) continue;
+			if (path.startsWith(cfg.resultsDir)) continue;
 			if (inFlight.has(path)) continue;
 			if (files.has(resultPath(requestName(path, cfg.inboxDir), cfg.resultsDir))) continue; // done
-			started.push(handleRequest(path, fileId));
+			const run = handleRequest(path, fileId).finally(() => pending.delete(run));
+			pending.add(run);
+			started.push(run);
 		}
 		return Promise.all(started);
 	}
 
-	return { scan, inFlight };
+	/** Wait for in-flight requests to finish writing their results. False if `timeoutMs` ran out first. */
+	async function drain(timeoutMs) {
+		if (pending.size === 0) return true;
+		let timer;
+		const timeout = new Promise((resolve) => {
+			timer = setTimeout(() => resolve(false), timeoutMs);
+		});
+		const settled = Promise.allSettled([...pending]).then(() => true);
+		try {
+			return await Promise.race([settled, timeout]);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
+	return { scan, drain, inFlight };
 }

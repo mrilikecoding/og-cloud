@@ -13,6 +13,7 @@ import * as Y from "yjs";
 import { createInbox } from "../../headless/lib/inbox.mjs";
 import { parseNote as parseNoteJs } from "../../headless/lib/frontmatter.mjs";
 import { requestName, resultPath } from "../../headless/lib/paths.mjs";
+import { shutdown } from "../../headless/lib/shutdown.mjs";
 import { resultNote } from "../../headless/lib/resultNote.mjs";
 import { createFile, liveFiles, textOf } from "../../headless/lib/vault.mjs";
 import { suite } from "../harness.ts";
@@ -273,6 +274,150 @@ s.test("a re-sync mid-run does not start a second run", async () => {
 	await Promise.all([first, again, thirdTime]);
 	s.check(calls === 1, "still one run after it finishes");
 	s.check(resultText(ydoc, "slow") !== null, "result written once");
+});
+
+function countingInbox(ydoc: Y.Doc, device = "mini") {
+	const calls: string[] = [];
+	const inbox = createInbox({
+		ydoc,
+		cfg: { ...cfg, device },
+		run: (ensemble: string) => {
+			calls.push(ensemble);
+			return Promise.resolve({ status: "completed", deliverable: "ok" });
+		},
+	});
+	return { inbox, calls };
+}
+
+s.test("runner claim: a request naming another runner is skipped", async () => {
+	const ydoc = new Y.Doc();
+	createFile(ydoc, "inbox/theirs.md", "---\nagent: e\nrunner: laptop\n---\nbody", "laptop");
+	const { inbox, calls } = countingInbox(ydoc, "mini");
+	await inbox.scan();
+	s.check(calls.length === 0, "not run by a different device");
+	s.check(resultText(ydoc, "theirs") === null, "no result written");
+});
+
+s.test("runner claim: a request naming this device is taken", async () => {
+	const ydoc = new Y.Doc();
+	createFile(ydoc, "inbox/mine.md", "---\nagent: e\nrunner: mini\n---\nbody", "laptop");
+	const { inbox, calls } = countingInbox(ydoc, "mini");
+	await inbox.scan();
+	s.check(calls.length === 1, "run by the named device");
+});
+
+s.test("runner claim: without runner any peer takes it", async () => {
+	const ydoc = new Y.Doc();
+	request(ydoc, "open", "e");
+	const { inbox, calls } = countingInbox(ydoc, "whoever");
+	await inbox.scan();
+	s.check(calls.length === 1, "run by an arbitrary device");
+});
+
+s.test("loop prevention: agent-tagged notes are not requests", async () => {
+	const ydoc = new Y.Doc();
+	createFile(ydoc, "inbox/list.md", "---\nagent: e\ntags: [agent, ai-tools]\n---\nbody", "x");
+	createFile(ydoc, "inbox/str.md", "---\nagent: e\ntags: agent\n---\nbody", "x");
+	createFile(ydoc, "inbox/hash.md", "---\nagent: e\ntags: [\"#agent\"]\n---\nbody", "x");
+	createFile(ydoc, "inbox/other.md", "---\nagent: e\ntags: [todo]\n---\nbody", "x");
+	const { inbox, calls } = countingInbox(ydoc);
+	await inbox.scan();
+	s.check(calls.length === 1, "only the untagged-as-agent note ran");
+	s.check(resultText(ydoc, "other") !== null, "the todo-tagged note got its result");
+	s.check(resultText(ydoc, "list") === null, "agent-tagged list: no result");
+	s.check(resultText(ydoc, "str") === null, "agent-tagged string: no result");
+	s.check(resultText(ydoc, "hash") === null, "#agent tag: no result");
+});
+
+s.test("loop prevention: nothing under results/ is a request", async () => {
+	const ydoc = new Y.Doc();
+	createFile(ydoc, "results/x.md", "---\nagent: e\n---\nbody", "x");
+	// inbox and results nested the odd way round
+	const { inbox, calls } = countingInbox(ydoc);
+	const odd = createInbox({
+		ydoc,
+		cfg: { device: "mini", inboxDir: "", resultsDir: "results/" },
+		run: (ensemble: string) => {
+			calls.push(ensemble);
+			return Promise.resolve({});
+		},
+	});
+	await inbox.scan();
+	await odd.scan();
+	s.check(calls.length === 0, "results/ notes never run");
+});
+
+s.test("drain waits for an in-flight run, up to the timeout", async () => {
+	const ydoc = new Y.Doc();
+	request(ydoc, "d", "e");
+	let release: (v: unknown) => void = () => {};
+	const inbox = createInbox({
+		ydoc,
+		cfg,
+		run: () => new Promise((resolve) => {
+			release = resolve;
+		}),
+	});
+	void inbox.scan();
+	const early = await inbox.drain(30);
+	s.check(early === false, "drain reports a timeout while the run is open");
+	const waiting = inbox.drain(2000);
+	release({ status: "completed", deliverable: "x" });
+	s.check((await waiting) === true, "drain resolves true once the write has landed");
+	s.check(resultText(ydoc, "d") !== null, "result is in the doc when drain resolves");
+	s.check((await inbox.drain(10)) === true, "drain on an idle inbox is immediate");
+});
+
+s.test("shutdown drains in-flight writes before disconnecting", async () => {
+	const order: string[] = [];
+	let release: (v: unknown) => void = () => {};
+	const ydoc = new Y.Doc();
+	request(ydoc, "sd", "e");
+	const inbox = createInbox({
+		ydoc,
+		cfg,
+		run: () => new Promise((resolve) => {
+			release = resolve;
+		}),
+	});
+	void inbox.scan();
+	const done = shutdown({
+		inbox,
+		disconnect: () => {
+			order.push("disconnect");
+		},
+		timeoutMs: 2000,
+		settleMs: 0,
+		log: (m: string) => {
+			order.push(m);
+		},
+	});
+	await new Promise((r) => setTimeout(r, 20));
+	s.check(!order.includes("disconnect"), "still connected while the run is open");
+	release({ status: "completed", deliverable: "x" });
+	await done;
+	s.check(order[order.length - 1] === "disconnect", "disconnect comes last");
+	s.check(resultText(ydoc, "sd") !== null, "result was written before disconnect");
+});
+
+s.test("shutdown gives up after the timeout and disconnects anyway", async () => {
+	const ydoc = new Y.Doc();
+	request(ydoc, "stuck", "e");
+	const inbox = createInbox({ ydoc, cfg, run: () => new Promise(() => {}) });
+	void inbox.scan();
+	let disconnected = false;
+	const t0 = Date.now();
+	await shutdown({
+		inbox,
+		disconnect: () => {
+			disconnected = true;
+		},
+		timeoutMs: 50,
+		settleMs: 0,
+		log: () => {},
+	});
+	s.check(disconnected, "disconnected after the timeout");
+	s.check(Date.now() - t0 < 1000, "did not wait for the stuck run");
 });
 
 await s.done();
