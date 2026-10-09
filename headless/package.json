@@ -1,0 +1,15 @@
+{
+  "name": "og-cloud-headless",
+  "private": true,
+  "type": "module",
+  "description": "Headless vault peers: inbox runner and probes. Runs under Node 22 without Obsidian.",
+  "scripts": {
+    "inbox": "node inbox.mjs",
+    "probe": "node probe.mjs"
+  },
+  "dependencies": {
+    "js-yaml": "4.3.1",
+    "y-partyserver": "2.1.2",
+    "yjs": "^13.6.20"
+  }
+}

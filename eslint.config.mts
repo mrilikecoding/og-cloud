@@ -101,6 +101,9 @@ export default tseslint.config(
 		// Node or workerd and must not inherit browser/mobile plugin rules.
 		"build-server-release.mjs",
 		"scripts",
+		// Headless vault peers run under plain Node, not inside Obsidian, so the
+		// plugin rules (no console, window timers, requestUrl) do not apply.
+		"headless",
 		"server/scripts",
 		"server/bench-*.ts",
 		"server/tests",
