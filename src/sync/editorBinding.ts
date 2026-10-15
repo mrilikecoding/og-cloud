@@ -1,6 +1,6 @@
 import { Compartment, type Extension } from "@codemirror/state";
 import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
-import { yCollab, ySyncFacet } from "y-codemirror.next";
+import { yCollab, ySyncFacet, YSyncConfig } from "y-codemirror.next";
 import * as Y from "yjs";
 import { editorInfoField, MarkdownView, Notice, type MarkdownFileInfo, type TFile, type Workspace } from "obsidian";
 import type { VaultSync } from "./vaultSync";
@@ -69,6 +69,12 @@ interface EditorBinding {
 	/** Last doc-changing editor update since bind; null until the user types. */
 	lastDocChangeAtMs: number | null;
 	settleWindowMs: number;
+	/** Watches the bound Y.Text for changes the editor failed to follow. */
+	followObserver: (event: Y.YTextEvent, txn: Y.Transaction) => void;
+	/** yCollab detached by suspendCollab; the editor is expected to lag. */
+	suspended: boolean;
+	/** Set when a non-editor transaction left the editor behind the Y.Text. */
+	editorMissedUpdate: { at: number; origin: string } | null;
 }
 
 export interface BindingDebugInfo {
@@ -138,6 +144,13 @@ export interface BindingPropagationGate {
 	): void;
 }
 
+function describeOrigin(origin: unknown): string {
+	if (typeof origin === "string") return origin;
+	if (origin == null) return "none";
+	if (typeof origin === "object") return origin.constructor?.name ?? "object";
+	return typeof origin;
+}
+
 export class EditorBindingManager {
 	/** The CM6 compartment that holds yCollab for each editor. */
 	readonly compartment = new Compartment();
@@ -170,6 +183,8 @@ export class EditorBindingManager {
 	});
 	private healthWorkInFlight = new Set<string>();
 	private postBindTimers = new Map<string, number>();
+	/** Health checks raised inside a CodeMirror update, run on the next task. */
+	private deferredHealthChecks = new Map<string, number>();
 	private lastDeviceName = "unknown";
 	private cmDegradedWarned = false;
 	private cmResolveAttempts = new Map<string, number>();
@@ -538,6 +553,7 @@ export class EditorBindingManager {
 		this.clearCmResolveRetry(leafId);
 		this.healthWorkInFlight.delete(leafId);
 		this.timestampStamper?.unwatch(binding.ytext);
+		binding.ytext.unobserve(binding.followObserver);
 		binding.undoManager.destroy();
 		this.bindings.delete(leafId);
 		this.cmToLeafId.delete(binding.cm);
@@ -565,6 +581,7 @@ export class EditorBindingManager {
 			this.healthWorkInFlight.delete(leafId);
 			this.cmToLeafId.delete(binding.cm);
 			this.timestampStamper?.unwatch(binding.ytext);
+			binding.ytext.unobserve(binding.followObserver);
 			binding.undoManager.destroy();
 			this.log(`unbindAll: destroyed binding for "${binding.path}"`);
 		}
@@ -595,6 +612,7 @@ export class EditorBindingManager {
 				}
 				this.cmToLeafId.delete(binding.cm);
 				this.timestampStamper?.unwatch(binding.ytext);
+				binding.ytext.unobserve(binding.followObserver);
 				this.bindings.delete(leafId);
 				this.log(`unbindByPath: unbound "${path}" (leaf=${leafId})`);
 				// Don't break — a path could theoretically be open in multiple leaves
@@ -641,6 +659,7 @@ export class EditorBindingManager {
 			this.clearCmResolveRetry(leafId);
 			this.healthWorkInFlight.delete(leafId);
 			this.timestampStamper?.unwatch(binding.ytext);
+			binding.ytext.unobserve(binding.followObserver);
 			binding.undoManager.destroy();
 			this.cmToLeafId.delete(binding.cm);
 			this.bindings.delete(leafId);
@@ -793,6 +812,7 @@ export class EditorBindingManager {
 			this.log(`suspendCollab: failed for "${binding.path}" (leaf=${leafId}): ${String(err)}`);
 			return false;
 		}
+		binding.suspended = true;
 		this.log(`suspendCollab: detached "${binding.path}" (leaf=${leafId}, reason=${reason})`);
 		this.trace?.("editor", "collab-suspended", { leafId, path: binding.path, reason });
 		return true;
@@ -1228,6 +1248,12 @@ export class EditorBindingManager {
 			}
 		}
 
+		if (binding.editorMissedUpdate) {
+			// The facet can be right while the ySync instance behind it is not
+			// (SYNC-06); only the editor's content tells.
+			issues.push("editor-missed-update");
+		}
+
 		return {
 			healthy: issues.length === 0,
 			settling: issues.length === 0 && deferredIssues.length > 0,
@@ -1291,7 +1317,76 @@ export class EditorBindingManager {
 			match.binding.lastEditorChangeAtMs = now;
 			match.binding.lastDocChangeAtMs = now;
 		}
-		this.maybeHealBinding(match.leafId, match.binding, "live-update");
+		// CodeMirror calls this from inside its own update, and a repair
+		// dispatches a reconfigure, which CodeMirror refuses while an update is
+		// in progress. Field case 2026-10-13: the rebind's unbind failed
+		// silently and left the editor wired to a stale ySync (SYNC-06).
+		this.scheduleDeferredHealthCheck(match.leafId, match.binding, "live-update");
+	}
+
+	/**
+	 * Run maybeHealBinding on the next task rather than now. One pending check
+	 * per leaf; the binding is re-read when it fires.
+	 */
+	private scheduleDeferredHealthCheck(
+		leafId: string,
+		binding: EditorBinding,
+		source: string,
+	): void {
+		if (this.deferredHealthChecks.has(leafId)) return;
+		const timer = window.setTimeout(() => {
+			this.deferredHealthChecks.delete(leafId);
+			const current = this.bindings.get(leafId);
+			if (!current || current !== binding) return;
+			this.maybeHealBinding(leafId, current, source);
+		}, 0);
+		this.deferredHealthChecks.set(leafId, timer);
+	}
+
+	/**
+	 * y-codemirror applies a non-editor transaction to the editor
+	 * synchronously, so once it has run the editor and the Y.Text agree. If
+	 * they do not, the editor is no longer following this Y.Text (a stale
+	 * ySync instance, a dropped observer) and the facet check cannot see it.
+	 * Field case 2026-10-15 (SYNC-06): every stamp missed the editor, reached
+	 * disk, was reloaded by Obsidian and pushed back as a user edit, for hours.
+	 */
+	private checkEditorFollowed(
+		leafId: string,
+		binding: EditorBinding,
+		txn: Y.Transaction,
+	): void {
+		if (this.bindings.get(leafId) !== binding) return;
+		if (binding.suspended || binding.editorMissedUpdate) return;
+		// The editor is ahead by construction while it pushes its own change.
+		if (txn.origin instanceof YSyncConfig) return;
+		if (this.bindingPropagationGate?.isPaused(binding.path)) return;
+		const editorContent = binding.view.editor.getValue();
+		const crdtContent = binding.ytext.toJSON();
+		if (editorContent === crdtContent) return;
+		const origin = describeOrigin(txn.origin);
+		binding.editorMissedUpdate = { at: Date.now(), origin };
+		this.log(
+			`binding: editor did not follow a ${origin} change to "${binding.path}" ` +
+			`(leaf=${leafId}, editor=${editorContent.length}, crdt=${crdtContent.length} chars)`,
+		);
+		this.trace?.("editor", "binding-editor-missed-update", {
+			leafId,
+			path: binding.path,
+			origin,
+			editorLength: editorContent.length,
+			crdtLength: crdtContent.length,
+		});
+		// Not inline: a repair reconfigures the editor, and this runs inside
+		// the Y.js observer pass of a transaction other code is still in.
+		this.scheduleDeferredHealthCheck(leafId, binding, "crdt-observer");
+	}
+
+	private clearDeferredHealthCheck(leafId: string): void {
+		const timer = this.deferredHealthChecks.get(leafId);
+		if (timer === undefined) return;
+		window.clearTimeout(timer);
+		this.deferredHealthChecks.delete(leafId);
 	}
 
 	private maybeHealBinding(
@@ -1439,6 +1534,7 @@ export class EditorBindingManager {
 
 	private clearScheduledHealthCheck(leafId: string): void {
 		this.clearPostBindTimer(leafId);
+		this.clearDeferredHealthCheck(leafId);
 		this.healthScheduler.clear(leafId);
 	}
 
@@ -1484,6 +1580,15 @@ export class EditorBindingManager {
 
 		try {
 			this.clearLocalCursor(`${action}-pre-reconfigure`);
+			if (existing) {
+				// CodeMirror keeps a ViewPlugin instance across a reconfigure
+				// when the same spec is present before and after, and
+				// y-codemirror's ySync is one module-level spec whose instance
+				// captured its Y.Text (and Y.Text observer) at construction.
+				// Going straight from yCollab(old) to yCollab(new) would leave
+				// the editor wired to the old Y.Text. Detach so it is rebuilt.
+				cm.dispatch({ effects: this.compartment.reconfigure([]) });
+			}
 			cm.dispatch({
 				effects: this.compartment.reconfigure(collabExtension),
 			});
@@ -1497,7 +1602,10 @@ export class EditorBindingManager {
 		}
 
 		existing?.undoManager.destroy();
-		if (existing) this.timestampStamper?.unwatch(existing.ytext);
+		if (existing) {
+			this.timestampStamper?.unwatch(existing.ytext);
+			existing.ytext.unobserve(existing.followObserver);
+		}
 		if (existing) {
 			this.cmToLeafId.delete(existing.cm);
 		}
@@ -1509,7 +1617,7 @@ export class EditorBindingManager {
 		const settleWindowMs = rapidSwitch
 			? FAST_SWITCH_BINDING_SETTLE_WINDOW_MS
 			: BASE_BINDING_SETTLE_WINDOW_MS;
-		this.bindings.set(leafId, {
+		const binding: EditorBinding = {
 			view,
 			path: filePath,
 			file: view.file,
@@ -1526,9 +1634,17 @@ export class EditorBindingManager {
 			lastDocChangeAtMs:
 				existing && existing.path === filePath ? existing.lastDocChangeAtMs : null,
 			settleWindowMs,
-		});
+			followObserver: (_event, txn) => this.checkEditorFollowed(leafId, binding, txn),
+			suspended: false,
+			editorMissedUpdate: null,
+		};
+		this.bindings.set(leafId, binding);
 		this.cmToLeafId.set(cm, leafId);
 		this.timestampStamper?.watch(ytext, filePath);
+		// Registered after the dispatch above, so y-codemirror's own observer
+		// (added when its plugin was constructed) runs first and the editor is
+		// already updated when ours compares.
+		ytext.observe(binding.followObserver);
 		this.schedulePostBindHealthCheck(leafId, settleWindowMs);
 		this.trace?.("editor", "binding-applied", {
 			action,
