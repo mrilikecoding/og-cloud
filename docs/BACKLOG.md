@@ -29,6 +29,21 @@ Each item names current evidence, required work, and closure evidence. Historica
 
 **Closure:** Focused regression fails before the fix and passes after it; re-enable keeps the file absent on the deleting device; the remote device observes the intended delete or an explicitly preserved conflict; unreadable-path and new-device materialization cases remain safe.
 
+### SYNC-06 — an open note is rewritten every few seconds, changing only `modified:`
+
+**State:** Fixed in 3f965d3c and ecba96d7 (og.24), awaiting field confirmation.
+
+**Evidence:** `Notes/Genealogy/Paternal/PATTAT/Pierre Pattat.md` on 2026-10-15, 15:10 to 16:04Z and 17:39Z until the tab was closed at 18:38Z: 1,680 `timestamp-stamped` traces, one every 3.5 s, each cycle `stamper: stamped` → `flushWrite: updated` → `Suppressed modify event` → stamp. Consecutive disk copies differ only in the `modified:` seconds. `Alice Holloway.md` ran the same loop for 2,508 stamps on 10-13 and `Madeleine Taquelet.md` for 479. All three were open in the same tab (leaf `48a9099ab00e2113`) and all three had been written from outside Obsidian (Claude; file mode 600) while open, which is what started each loop. `current-state.json` mid-cycle showed editor == disk, editor ≠ CRDT, same length: the CRDT held the new stamp and the editor did not.
+
+**Cause:** the tab's binding pushed editor changes into the Y.Text but no longer received the Y.Text's changes, and `inspectBindingHealth` could not tell: it checks that the ySync facet names the right Y.Text, not that the editor follows it. With the CRDT→editor direction dead, every stamp reached disk through the mirror, Obsidian reloaded the open editor from disk, y-codemirror pushed the reloaded `modified:` value back into the CRDT as a user edit, and the stamper stamped again. How that binding lost its observer is not proven. The log shows it breaking at 2026-10-13T23:20:42Z in a `live-update` repair: `bind: failed ... Calls to EditorView.update are not allowed while an update is in progress`, i.e. the repair dispatched a reconfigure from inside CodeMirror's own update; the rebind's `unbind` half failed the same way, silently, and a retry then reported `bind: bound`. Two code facts make a stale ySync instance possible in that neighbourhood: CodeMirror keeps a ViewPlugin instance across a reconfigure when the same spec is present before and after (`updatePlugins`), and y-codemirror's `ySync` is one module-level spec whose instance captured its `YSyncConfig` and Y.Text observer at construction, so `repair` going straight from `yCollab(old)` to `yCollab(new)` left the instance on the old config.
+
+**Fix:** three parts.
+1. The stamper remembers the body (text minus the `modified:` value) at its last stamp and skips a user transaction that leaves it unchanged (`timestamp-stamp-skipped`, reason `body-unchanged`). This ends the loop whatever broke the binding.
+2. Each binding observes its Y.Text; after a non-editor transaction the editor must show the same text (y-codemirror applies synchronously and its observer runs first). A mismatch is traced as `binding-editor-missed-update`, adds the `editor-missed-update` health issue, and the binding is rebound. `suspendCollab` marks the binding so recovery's deliberate detach is not reported.
+3. `live-update` health checks are deferred to the next task, and a repair that keeps the EditorView dispatches `reconfigure([])` before the new `yCollab`, so the ySync instance is rebuilt. Regression: `tests/client/binding-crdt-to-editor-health.ts`, `timestamp-stamper.ts` tests 16 and 17.
+
+**Closure:** no path with more than a few `timestamp-stamped` traces per minute over a week of use; a `binding-editor-missed-update` trace, if one ever fires, followed by `binding-health-restored` and no loop. The sweep: `grep -h '"msg":"timestamp-stamped' logs/<day>/boot-*.ndjson | grep -oE '"path":"[^"]+' | sort | uniq -c | sort -rn | head`.
+
 ### SYNC-05 — a note opened with a stale disk copy is typed into before the editor sees the CRDT
 
 **State:** Open, one incident with artifacts, fix not started.
