@@ -242,4 +242,55 @@ s.section("Test 15: noteRename while watched updates the entry's path and preser
 	s.check(t !== undefined && t.data?.path === "Notes/B.md", "timestamp-stamped trace reports the new path");
 }
 
+s.section("Test 16: a user transaction that leaves the body unchanged does not stamp (SYNC-06 loop)");
+{
+	// Field case, Pierre Pattat 2026-10-15: the editor had lost its CRDT
+	// observer, so each stamp reached disk, Obsidian reloaded the editor,
+	// and yCollab pushed the reloaded `modified:` value back into the
+	// CRDT as a user edit. Content identical, origin user, stamp, repeat.
+	const f = fixture();
+	f.stamper.watch(f.ytext, "a.md");
+	f.typeAs(USER, "body");
+	f.firePending();
+	const stamped = f.ytext.toString();
+	s.check(stamped === "---\nmodified: 2026-09-16T21:00:00-07:00\n---\nbody", "first stamp applied");
+
+	f.setClock("2026-09-16T21:00:04-07:00");
+	// The echo: delete and re-insert the seconds digits of `modified:`, as the
+	// editor reload does. The text is byte-identical afterwards.
+	const at = stamped.indexOf("00-07:00") ;
+	f.doc.transact(() => {
+		f.ytext.delete(at, 2);
+		f.ytext.insert(at, "00");
+	}, USER);
+	s.check(f.ytext.toString() === stamped, "echo transaction left the text identical");
+	f.firePending();
+	s.check(f.ytext.toString() === stamped, "no second stamp: body unchanged since the last stamp");
+	const skipped = f.traces.find((x) => x.event === "timestamp-stamp-skipped");
+	s.check(skipped !== undefined && skipped.data?.reason === "body-unchanged", "skip is traced with its reason");
+
+	// A real edit afterwards stamps again.
+	f.setClock("2026-09-16T21:00:09-07:00");
+	f.typeAs(USER, "!");
+	f.firePending();
+	s.check(f.ytext.toString() === "---\nmodified: 2026-09-16T21:00:09-07:00\n---\nbody!", "a body change stamps as before");
+}
+
+s.section("Test 17: a user edit to the modified value alone does not stamp");
+{
+	const f = fixture();
+	f.stamper.watch(f.ytext, "a.md");
+	f.typeAs(USER, "body");
+	f.firePending();
+	f.setClock("2026-09-16T21:00:04-07:00");
+	const text = f.ytext.toString();
+	const at = text.indexOf("2026-09-16T21:00:00-07:00");
+	f.doc.transact(() => {
+		f.ytext.delete(at, "2026-09-16T21:00:00-07:00".length);
+		f.ytext.insert(at, "2026-09-16T20:00:00-07:00");
+	}, USER);
+	f.firePending();
+	s.check(f.ytext.toString().includes("modified: 2026-09-16T20:00:00-07:00"), "hand-edited modified value is left alone");
+}
+
 await s.done();

@@ -90,6 +90,19 @@ export function computeTimestampEdits(
 	return edits;
 }
 
+/**
+ * The note with its `modified:` value removed: everything a stamp must not
+ * change. Two texts with the same body differ at most in that value, so a
+ * user transaction that leaves the body alone has nothing to stamp.
+ */
+export function stampedBody(text: string): string {
+	const block = extractFrontmatter(text);
+	if (block.kind !== "present") return text;
+	const modified = findValueRange(text, block.start, block.end, MODIFIED_KEY);
+	if (modified === null) return text;
+	return text.slice(0, modified.from) + text.slice(modified.to);
+}
+
 export const TIMESTAMP_DEBOUNCE_MS = 2000;
 
 export interface TimestampStamperDeps {
@@ -112,6 +125,13 @@ interface WatchEntry {
 	bornEmpty: boolean;
 	/** Path this entry's born-empty status was read under; used to consume it from bornEmptyPaths even if `path` is later renamed. */
 	bornEmptyPath: string;
+	/**
+	 * Body (see stampedBody) at the last stamp, or null before the first.
+	 * A user transaction that leaves it unchanged is an echo of our own
+	 * stamp, not an edit, and stamping it again would feed the loop that
+	 * produced it.
+	 */
+	lastStampedBody: string | null;
 }
 
 export class TimestampStamper {
@@ -140,6 +160,7 @@ export class TimestampStamper {
 			timer: null,
 			bornEmpty: this.bornEmptyPaths.has(path),
 			bornEmptyPath: path,
+			lastStampedBody: null,
 		};
 		ytext.observe(entry.handler);
 		this.entries.set(ytext, entry);
@@ -205,7 +226,17 @@ export class TimestampStamper {
 		const doc = ytext.doc;
 		if (!doc) return;
 		const withCreated = entry.bornEmpty;
-		const edits = computeTimestampEdits(ytext.toJSON(), this.deps.now(), { withCreated });
+		const text = ytext.toJSON();
+		const body = stampedBody(text);
+		if (body === entry.lastStampedBody) {
+			this.deps.trace?.("timestamp", "timestamp-stamp-skipped", {
+				path: entry.path,
+				reason: "body-unchanged",
+				stampReason: reason,
+			});
+			return;
+		}
+		const edits = computeTimestampEdits(text, this.deps.now(), { withCreated });
 		if (edits.length === 0) return;
 		entry.bornEmpty = false;
 		if (withCreated) this.bornEmptyPaths.delete(entry.bornEmptyPath);
@@ -215,6 +246,9 @@ export class TimestampStamper {
 				ytext.insert(edit.from, edit.insert);
 			}
 		}, ORIGIN_TIMESTAMP);
+		// Read back rather than reuse `body`: a first stamp may have added the
+		// frontmatter block or the created line, which are part of the body.
+		entry.lastStampedBody = stampedBody(ytext.toJSON());
 		this.deps.log?.(`stamper: stamped "${entry.path}" (${reason}${withCreated ? ", created" : ""})`);
 		this.deps.trace?.("timestamp", "timestamp-stamped", {
 			path: entry.path,
