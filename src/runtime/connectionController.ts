@@ -344,7 +344,14 @@ export class ConnectionController {
 				const currentSync = this.deps.getVaultSync();
 				if (!currentSync || currentSync !== sync) return;
 				if (currentSync.fatalAuthError) return;
-				if (currentSync.connected || currentSync.provider.wsconnecting) return;
+				// Always connect(). disconnect() set shouldConnect=false, and a
+				// dead socket's close event can take a minute (the browser waits
+				// out the close handshake), during which `connected` still reads
+				// true. Skipping connect() here left the provider with nothing to
+				// reconnect when that close finally arrived (2026-10-19, nine
+				// hours offline). connect() only opens a socket when none exists,
+				// so calling it while the old one is closing is safe: it restores
+				// shouldConnect and the provider's own backoff does the rest.
 				void currentSync.provider.connect();
 			}, FAST_RECONNECT_JITTER_MS);
 		}, FAST_RECONNECT_DEBOUNCE_MS);
