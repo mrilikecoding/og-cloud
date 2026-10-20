@@ -93,6 +93,7 @@ Always use the plain (redacted) export, never the with-filenames variant. The re
 | `Folder already exists.` on write | `disk.write.failed` in flight logs | Fixed in og.21. If it returns, something is reading the vault index before it is loaded |
 | Text typed on the phone vanishes and comes back | Mac log: `syncFileFromDisk: applying diff` on a closed note within seconds of the Mac's own `flushWrite` for it | `SYNC-04`, fixed in og.23: the mirror's own write echo arrived after the suppression window and was imported as an external edit |
 | A note's `modified:` changes every few seconds while nobody types; edit-history snapshots pile up | `timestamp-stamped` per path (SYNC-06 sweep in `BACKLOG.md`); mid-cycle `current-state.json` shows editor == disk ≠ CRDT | `SYNC-06`, fixed in og.24: the open editor stopped receiving CRDT changes, so each stamp came back from disk as a user edit. Closing the tab stops it; the trigger was a note written from outside Obsidian while open in a tab |
+| Status bar stuck on `Offline` or `Unsent` after the Mac wakes from sleep; nothing else wrong | `Fast reconnect triggered (app-foregrounded)` followed ~60 s later by `Provider status=disconnected` and no `connecting` after it | `SYNC-07`, fixed in og.25: the fast reconnect skipped `connect()` because the dead socket still reported connected. Run the command **Reconnect to sync server** to recover |
 | Typed text vanishes and comes back | `flushWrite: updated` on the note being typed in, with `afterTxn: remote content change to closed file` before it | The mirror lost track that the note is open and is writing under the editor. Was the note renamed while open? Fixed in 985eb99 |
 | Sync says disconnected but works | nothing; check the status bar instead | The settings row was a snapshot before og.20; it is live now |
 | Version row looks wrong | `.patched` versus the build stamp | A build installed without a reload, or a device never updated |
@@ -141,14 +142,15 @@ rsync and `cp` both resist naive sabotage, which makes failure injection harder 
 - Empty `logs/<date>/` directories. Retention deletes files; the `rmdir` is best-effort and leaves 0-byte shells.
 - `binding-repair-after-recovery` with `healthyBeforeRecovery: true`. Deliberate since a9db183: recovery suspends collab around its diff, so the binding always needs reattaching afterwards.
 
-## State as of 2026-10-15
+## State as of 2026-10-19
 
-Running `2.1.1-og.24` on the Mac once reloaded (`2.1.1-og.23`, `5f1db4e`, before that). Open items, with detail in `BACKLOG.md`:
+Running `2.1.1-og.25` on the Mac once reloaded (`2.1.1-og.24`, `61fc077a`, before that). Open items, with detail in `BACKLOG.md`:
 
 - **`SYNC-03`** — conflict artifacts while typing into a new note. Fixed in og.22, awaiting field confirmation.
 - **`SYNC-04`** — late write echoes re-imported, deleting the phone's keystrokes. Fixed in og.23, awaiting field confirmation.
 - **`SYNC-05`** — stale editor typed into after a restart with the note open (Orphan.md, 10-07). Open; the next thing to pick up.
 - **`SYNC-06`** — stamp loop on an open note whose editor stopped following the CRDT (Pierre Pattat, 10-15). Fixed in og.24, awaiting field confirmation.
+- **`SYNC-07`** — sync stayed offline for nine hours after a sleep/wake (10-19); the fast reconnect never called `connect()`. Fixed in og.25, awaiting field confirmation.
 - **`COST-01`** — Durable Object stays resident despite `hibernate: true`; about 58% of the included duration allowance, driven by a message floor of roughly one per minute through idle hours.
 - The three `closed-file-*` artifacts of 09-17 were never explained. The plain logs for that day are long pruned; the flight logs recorded `both-changed` and `missing-baseline` verdicts during a day of repeated plugin rebuilds.
 - Upstream carries the stale-seed bug fixed here in 7808be6 and the folder-creation bug fixed in 5b04c84. No patch has been offered upstream.

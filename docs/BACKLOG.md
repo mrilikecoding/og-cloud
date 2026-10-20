@@ -29,6 +29,18 @@ Each item names current evidence, required work, and closure evidence. Historica
 
 **Closure:** Focused regression fails before the fix and passes after it; re-enable keeps the file absent on the deleting device; the remote device observes the intended delete or an explicitly preserved conflict; unreadable-path and new-device materialization cases remain safe.
 
+### SYNC-07 — sync stays offline after the Mac wakes from sleep
+
+**State:** Fixed (og.25), awaiting field confirmation.
+
+**Evidence:** 2026-10-19, boot `boot-k33XYFTRWrlARW`. Last server receipt 15:12Z; the Mac slept at about 15:13Z and Obsidian was foregrounded at 15:28:49Z (`Fast reconnect triggered (app-foregrounded)`). Exactly 60 s later, `Provider status=disconnected`, then nothing but `socket ticket refreshed in provider URL` every 4.5 min until a manual reconnect nine hours on. The status bar read `OG-cloud Unsent`. Earlier the same day four `Auth rejected (unauthorized)` cycles recovered in under 10 s each, because those went through the server.
+
+**Cause:** `requestFastReconnect` called `provider.disconnect()` and 500 ms later checked `if (currentSync.connected || provider.wsconnecting) return;` before `provider.connect()`. y-partyserver's `disconnect()` sets `shouldConnect = false` and calls `ws.close()`, but `wsconnected` only clears in the socket's `close` event, and on a TCP connection that died during sleep Chromium waits out the close handshake (the 60 s). So `connected` still read true, `connect()` was skipped, and when the close finally fired the provider's backoff reconnect ran `setupWS`, whose first check is `shouldConnect`. The manual `reconnect()` path calls `disconnect(); connect();` back to back with no guard, which is why it recovers.
+
+**Fix:** the fast path always calls `connect()` after the jitter. `connect()` sets `shouldConnect` and only opens a socket when `ws === null`, so with the old socket still closing it does nothing but restore the flag. Regression: `tests/client/fast-reconnect-zombie-socket.ts` (fake provider with a delayed close).
+
+**Closure:** after a sleep/wake, `Fast reconnect triggered` is followed by `Provider status=connected` and a new `Connection generation` within about 70 s (the close handshake timeout plus backoff), never by a lone `status=disconnected`. Check with `grep -hE '"msg":"(Fast reconnect triggered|Provider status=|Connection generation)' logs/<day>/boot-*.ndjson`.
+
 ### SYNC-06 — an open note is rewritten every few seconds, changing only `modified:`
 
 **State:** Fixed in 3f965d3c and ecba96d7 (og.24), awaiting field confirmation.
