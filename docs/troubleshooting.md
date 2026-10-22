@@ -113,7 +113,7 @@ All read-only, all connect exactly as the plugin does, none write to the documen
 
 **The vault index is a cache; the adapter is the filesystem.** `getAbstractFileByPath` reads Obsidian's in-memory index, which is empty early in boot. `createFolder` and friends act on the real filesystem. Trusting the index during boot produced both the `Folder already exists.` writes and 20 bogus `crdt-file-missing-on-disk` verdicts. Use `vault.adapter.exists` for existence, and gate anything that reads the vault on `workspace.onLayoutReady`.
 
-**Exclude patterns are prefix-only.** `isExcluded` is `normalizedPath.startsWith(prefix)`. There is no glob and no extension matching, so excluding a file type means first relocating those files under one prefix.
+**Exclude patterns are prefixes or `*.ext`.** `isExcluded` matches a path prefix, or a file extension when the pattern is written `*.ext` (og.28). No other globbing. Since og.28 the patterns apply to blob downloads as well as uploads; before that an excluded blob path kept being downloaded. Settings are per device, so a pattern has to be entered on every device.
 
 **`compareSemver` returns `null` for any prerelease.** `2.1.1-og.21` cannot be ordered, so update recommendations and the manifest-fed compatibility guard both no-op rather than compare wrongly. That fails safe, but do not expect version comparisons to fire.
 
