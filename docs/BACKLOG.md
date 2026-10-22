@@ -29,6 +29,20 @@ Each item names current evidence, required work, and closure evidence. Historica
 
 **Closure:** Focused regression fails before the fix and passes after it; re-enable keeps the file absent on the deleting device; the remote device observes the intended delete or an explicitly preserved conflict; unreadable-path and new-device materialization cases remain safe.
 
+### SYNC-08 — blob sync reverts non-Markdown files edited while Obsidian was closed
+
+**State:** Fixed in f6f00bd2 (og.26), awaiting field confirmation. Reported in the vault note `Notes/docs/og-cloud-blob-startup-overwrite.md`, written by the Claude session whose edits were lost.
+
+**Evidence:** 2026-10-21, boot `boot-NIWEjwWC7SsQOp`. Obsidian had been closed since about 02:08Z; a script session edited `Vault Maintenance/vocabulary.json`, `scripts/check_notes.py` and 19 `.md.edtz` sidecars on disk. At 23:19:53.52Z, before `IndexedDB loaded` (53.96) and before the provider connected (55.33), the pathToBlob observer logged `remote blob ref for …` for every blob in the vault (11,856; the log dropped most lines). Blob reconcile at 56.956 queued 25 uploads including those 21 paths. The gate opened at 56.977, `dropped 11835 stale queued downloads`, drained 21: every one was a path with an upload queued 35 ms earlier. Each got `download-overwrite-decision action=overwrite-existing` and was replaced by the server copy. The upload for `vocabulary.json` then completed and wrote `setBlobRef hash=c1fcc1a9… (1092 bytes)`: the local content's hash with the overwritten file's size. At 23:49 a modify-event upload deduped against R2 and set the ref back to the old hash, so no device kept the edit. Markdown notes were fine throughout (29 `import-disk-to-crdt` decisions, reason `crdt-at-baseline`).
+
+**Cause:** three gaps that only bite together. (1) `startObservers` excluded only `ORIGIN_SEED`; y-indexeddb's `fetchUpdates` applies the stored doc in one transaction whose origin is the `IndexeddbPersistence` instance, so the replay read as a remote add of every blob. (2) `pruneSatisfiedQueuedDownloads` drops a queued download only when the hash cache, keyed by `{mtime,size}`, already holds the remote hash for the file's current stat; a file edited offline misses the cache and stays queued. (3) `processDownload` decided from disk hash vs remote hash alone, with no look at the upload queue, where the reconcile had just recorded the opposite decision for the same path. The code is upstream YAOS's, so stock 2.1.1 shares it.
+
+**Fix:** both blob observers act only on provider-origin and `ORIGIN_RESTORE` transactions (`isLocalOrigin`), so the replay schedules nothing and this device's own `setBlobRef` and renames never did; a download for a path with an upload pending, in flight, or in the modify debounce keeps the local file and writes the remote bytes as a conflict artifact (`download-conflict-quarantined`, reason `local-upload-pending`); the ref after an upload carries the size of the hashed bytes. Regression: `tests/client/blob-startup-local-edit.ts`. Side effect worth knowing: tombstones no longer re-run `handleRemoteDelete` at every boot through the replay; a tombstone received while offline still arrives with provider origin.
+
+**Not done:** a per-blob last-synced baseline (true three-way merge for blobs) and a safety brake on mass blob overwrites, both suggested in the report. The upload-pending guard covers the offline-edit case because the reconcile queues the upload before the gate opens; a baseline would also cover a remote change racing a local one when neither has queued yet.
+
+**Closure:** after a start where blobs changed offline, `reconcile: N uploads queued` with no `download: started` for the same paths and no `download-overwrite-decision … overwrite-existing` within the first minute; `observer: remote blob ref` lines appear only after `Provider synced`. Sweep: `grep -c '"msg":"observer: remote blob ref' logs/<day>/boot-*.ndjson` should be small, not thousands, on a boot.
+
 ### SYNC-07 — sync stays offline after the Mac wakes from sleep
 
 **State:** Fixed (og.25), awaiting field confirmation.
