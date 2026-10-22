@@ -146,7 +146,7 @@ rsync and `cp` both resist naive sabotage, which makes failure injection harder 
 
 ## State as of 2026-10-22
 
-Running `2.1.1-og.27` on the Mac once reloaded (`2.1.1-og.26`, `4c20a35b`, before that). Open items, with detail in `BACKLOG.md`:
+Running `2.1.1-og.28` on the Mac once reloaded (`2.1.1-og.27`, `1305e071`, before that). Open items, with detail in `BACKLOG.md`:
 
 - **`SYNC-03`** — conflict artifacts while typing into a new note. Fixed in og.22, awaiting field confirmation.
 - **`SYNC-04`** — late write echoes re-imported, deleting the phone's keystrokes. Fixed in og.23, awaiting field confirmation.
@@ -154,7 +154,7 @@ Running `2.1.1-og.27` on the Mac once reloaded (`2.1.1-og.26`, `4c20a35b`, befor
 - **`SYNC-06`** — stamp loop on an open note whose editor stopped following the CRDT (Pierre Pattat, 10-15). Fixed in og.24, awaiting field confirmation.
 - **`SYNC-07`** — sync stayed offline for nine hours after a sleep/wake (10-19); the fast reconnect never called `connect()`. Fixed in og.25, awaiting field confirmation.
 - **`SYNC-08`** — blobs edited while Obsidian was closed reverted at the next start (21 files, 10-21). Fixed in og.26, awaiting field confirmation.
-- **`SYNC-09`** — a device's reconcile advanced its baseline past a blocked write, then imported its stale disk copy over two notes (10-22). Fixed in og.27, awaiting field confirmation. The frontmatter growth rule that blocked the write is still in place.
+- **`SYNC-09`** — a device's reconcile advanced its baseline past a blocked write, then imported its stale disk copy over two notes (10-22). Fixed in og.27, awaiting field confirmation. og.28 then made the CRDT→disk write unconditional and downgraded the growth and type-flip rules to warnings (policy: every edit propagates), and added `*.ext` excludes that also apply to downloads; `*.edtz` should be set on every device.
 - **`COST-01`** — Durable Object stays resident despite `hibernate: true`; about 58% of the included duration allowance, driven by a message floor of roughly one per minute through idle hours.
 - The three `closed-file-*` artifacts of 09-17 were never explained. The plain logs for that day are long pruned; the flight logs recorded `both-changed` and `missing-baseline` verdicts during a day of repeated plugin rebuilds.
 - Upstream carries the stale-seed bug fixed here in 7808be6 and the folder-creation bug fixed in 5b04c84. No patch has been offered upstream.
