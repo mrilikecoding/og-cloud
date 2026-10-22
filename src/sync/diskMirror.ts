@@ -17,6 +17,22 @@ import { PreservedUnresolvedRegistry, type PreservedUnresolvedEntry, type Preser
 export { isLocalOrigin };
 
 /**
+ * What flushWrite did. Disk holds the CRDT text only after `written` or
+ * `unchanged`; every other value means it still holds whatever it held.
+ */
+export type FlushWriteOutcome =
+	| "written"
+	| "unchanged"
+	| "no-ytext"
+	| "deferred"
+	| "blocked"
+	| "failed";
+
+export function flushSettledDisk(outcome: FlushWriteOutcome): boolean {
+	return outcome === "written" || outcome === "unchanged";
+}
+
+/**
  * Three-way decision for remote-delete handling.
  * Discriminated union — NOT a boolean dirty flag.
  */
@@ -131,7 +147,7 @@ export class DiskMirror {
 	/** True while the drain loop is running. */
 	private draining = false;
 	private drainPromise: Promise<void> | null = null;
-	private pathWriteLocks = new Map<string, Promise<void>>();
+	private pathWriteLocks = new Map<string, Promise<unknown>>();
 
 	/** Per-file Y.Text observers. Only attached for open/active files. */
 	private textObservers = new Map<
@@ -563,16 +579,24 @@ export class DiskMirror {
 		}
 	}
 
-	async flushWrite(path: string, force = false): Promise<void> {
+	/**
+	 * Write the CRDT text for a path to disk. The outcome says whether disk
+	 * now holds that text: only `written` and `unchanged` do. Callers that
+	 * advance a baseline on the strength of this write must check it; a
+	 * baseline moved past what disk holds reads, at the next reconcile, as
+	 * "disk changed locally" and imports the stale file over the CRDT
+	 * (SYNC-09).
+	 */
+	async flushWrite(path: string, force = false): Promise<FlushWriteOutcome> {
 		path = normalizePath(path);
 		return this.runPathWriteLocked(path, () => this.flushWriteUnlocked(path, force));
 	}
 
-	private async flushWriteUnlocked(path: string, force: boolean): Promise<void> {
+	private async flushWriteUnlocked(path: string, force: boolean): Promise<FlushWriteOutcome> {
 		const ytext = this.vaultSync.getTextForPath(path);
 		if (!ytext) {
 			this.log(`flushWrite: no Y.Text for "${path}", skipping`);
-			return;
+			return "no-ytext";
 		}
 		const content = ytext.toJSON();
 
@@ -583,12 +607,12 @@ export class DiskMirror {
 			) {
 				this.log(`flushWrite: deferring open "${path}" (active editor has unflushed changes)`);
 				this.scheduleOpenWrite(path);
-				return;
+				return "deferred";
 			}
 			if (this.hasRecentEditorActivity(path)) {
 				this.log(`flushWrite: deferring open "${path}" (recent editor activity)`);
 				this.scheduleOpenWrite(path);
-				return;
+				return "deferred";
 			}
 		}
 
@@ -600,10 +624,10 @@ export class DiskMirror {
 				const currentContent = await this.app.vault.read(existing);
 				if (currentContent === content) {
 					this.log(`flushWrite: "${path}" unchanged, skipping`);
-					return;
+					return "unchanged";
 				}
 				if (this.shouldBlockFrontmatterWrite(path, currentContent, content)) {
-					return;
+					return "blocked";
 				}
 
 				await this.suppressWrite(path, content);
@@ -621,9 +645,10 @@ export class DiskMirror {
 					path: normalized,
 					data: { contentLength: content.length, isCreate: false },
 				});
+				return "written";
 			} else {
 				if (this.shouldBlockFrontmatterWrite(path, null, content)) {
-					return;
+					return "blocked";
 				}
 				await this.suppressWrite(path, content);
 				await this.ensureParentFolder(normalized);
@@ -643,6 +668,7 @@ export class DiskMirror {
 					path: normalized,
 					data: { contentLength: content.length, isCreate: true },
 				});
+				return "written";
 			}
 		} catch (err) {
 			console.error(`[yaos] flushWrite failed for "${path}":`, err);
@@ -656,6 +682,7 @@ export class DiskMirror {
 				path: normalized,
 				data: { error: err instanceof Error ? err.message : String(err) },
 			});
+			return "failed";
 		}
 	}
 
@@ -1518,12 +1545,12 @@ export class DiskMirror {
 		};
 	}
 
-	private runPathWriteLocked(path: string, work: () => Promise<void>): Promise<void> {
+	private runPathWriteLocked<T>(path: string, work: () => Promise<T>): Promise<T> {
 		// All flush paths funnel through one per-path promise chain so direct
 		// flushes cannot overlap with queued writes for the same file.
 		const previous = this.pathWriteLocks.get(path) ?? Promise.resolve();
 		const next = previous.catch(() => undefined).then(work);
-		let tracked: Promise<void>;
+		let tracked: Promise<T>;
 		tracked = next.finally(() => {
 			if (this.pathWriteLocks.get(path) === tracked) {
 				this.pathWriteLocks.delete(path);

@@ -1,6 +1,6 @@
 import { App, MarkdownView, Notice, TFile } from "obsidian";
 import type { BlobSyncManager } from "../sync/blobSync";
-import type { DiskMirror } from "../sync/diskMirror";
+import { flushSettledDisk, type DiskMirror } from "../sync/diskMirror";
 import {
 	type DiskIndex,
 	collectFileStats,
@@ -756,7 +756,18 @@ export class ReconciliationController {
 							conflictRisk: "none",
 						},
 					});
-					await diskMirror.flushWrite(path);
+					const outcome = await diskMirror.flushWrite(path);
+					if (!flushSettledDisk(outcome)) {
+						// Disk does not hold the CRDT text; leave the baseline
+						// where it was so the next reconcile sees the same gap
+						// rather than a fabricated local edit (SYNC-09).
+						this.deps.trace("reconcile", "reconcile-baseline-held", {
+							path,
+							outcome,
+							actionKind: "crdt-created-on-disk",
+						});
+						continue;
+					}
 					flushedCreates++;
 					// Record settled baseline hash: CRDT content was written to disk
 					const ytext = vaultSync.getTextForPath(path);
@@ -1003,7 +1014,19 @@ export class ReconciliationController {
 				}
 				}
 				for (const { path, baselineActionKind } of updatesToFlush) {
-					await diskMirror.flushWrite(path);
+					const outcome = await diskMirror.flushWrite(path);
+					if (!flushSettledDisk(outcome)) {
+						// The frontmatter guard, an open editor, or a write error
+						// left disk as it was. Advancing the baseline to the CRDT
+						// hash here is what made the phone "import" a stale note
+						// over two days of edits on 2026-10-22 (SYNC-09).
+						this.deps.trace("reconcile", "reconcile-baseline-held", {
+							path,
+							outcome,
+							actionKind: baselineActionKind,
+						});
+						continue;
+					}
 					flushedUpdates++;
 					// Record settled baseline hash: CRDT content was written to disk
 					const ytext = vaultSync.getTextForPath(path);
