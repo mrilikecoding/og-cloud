@@ -412,6 +412,13 @@ export class BlobSyncManager {
 		private trace?: TraceRecord,
 		initialPreservedUnresolved: PreservedUnresolvedEntry[] = [],
 		private onPreservedUnresolvedChanged?: () => void,
+		/**
+		 * Exclude patterns, applied to downloads. Uploads already honour them
+		 * (vault events, reconcile's disk scan); without this the shared map
+		 * kept pulling other devices' copies of an excluded path over the
+		 * local file. Omitted: every CRDT blob path is eligible.
+		 */
+		private isPathSyncable: (path: string) => boolean = () => true,
 	) {
 		this.blobClient = new BlobHttpClient(
 			settings.host,
@@ -456,6 +463,7 @@ export class BlobSyncManager {
 			if (!isRemote(event)) return;
 			event.changes.keys.forEach((change, path) => {
 				if (change.action === "add" || change.action === "update") {
+					if (!this.isPathSyncable(path)) return;
 					const ref = this.vaultSync.pathToBlob.get(path);
 					if (!ref) return;
 					this.log(
@@ -715,6 +723,7 @@ export class BlobSyncManager {
 
 		// CRDT blobs not on disk → schedule download
 		for (const path of crdtBlobPaths) {
+			if (!this.isPathSyncable(path)) continue;
 			if (!diskBlobs.has(path)) {
 				const ref = this.vaultSync.pathToBlob.get(path);
 				if (ref) {
@@ -1070,6 +1079,7 @@ export class BlobSyncManager {
 	prioritizeDownloads(paths: string[]): number {
 		let queued = 0;
 		for (const path of paths) {
+			if (!this.isPathSyncable(path)) continue;
 			// Already queued
 			if (this.downloadQueue.has(path)) continue;
 
@@ -1150,6 +1160,21 @@ export class BlobSyncManager {
 		);
 		try {
 			const normalized = normalizePath(item.path);
+
+			// A queue entry can predate the exclude (persisted snapshot, or
+			// queued before the setting changed).
+			if (!this.isPathSyncable(item.path)) {
+				this.downloadQueue.delete(item.path);
+				this.log(`download: "${item.path}" is excluded, skipping`);
+				this.trace?.("blob", "download-overwrite-decision", {
+					path: item.path,
+					hashPrefix: hashPrefix(item.hash),
+					diskHashBeforePrefix: null,
+					action: "skip-excluded",
+					sizeBytes: item.sizeBytes ?? null,
+				});
+				return;
+			}
 
 			// Check if file already exists with matching hash
 			const existing = this.app.vault.getAbstractFileByPath(normalized);

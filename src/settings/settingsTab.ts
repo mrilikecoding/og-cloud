@@ -246,8 +246,8 @@ export class VaultSyncSettingTab extends PluginSettingTab {
 				items: [
 					{
 						name: "Exclude paths",
-						desc: "Comma-separated path prefixes to skip, such as templates/, .trash/, or daily-notes/.",
-						control: { type: "text", key: "excludePatterns", placeholder: "templates/, daily-notes/" },
+						desc: "Comma-separated path prefixes to skip, such as templates/ or daily-notes/, and file types written as *.ext, such as *.edtz. Applies to uploads and downloads on this device.",
+						control: { type: "text", key: "excludePatterns", placeholder: "templates/, *.edtz" },
 					},
 					{
 						name: "Maximum text file size in kilobytes",

@@ -1,5 +1,6 @@
 import { type App, Notice } from "obsidian";
 import { BlobSyncManager, type BlobQueueSnapshot } from "../sync/blobSync";
+import { isBlobSyncable } from "../types";
 import type { BlobHashCache } from "../sync/blobHashCache";
 import type { VaultSync } from "../sync/vaultSync";
 import type { RuntimeConfig } from "./runtimeConfig";
@@ -84,6 +85,7 @@ export class AttachmentOrchestrator {
 			this.deps.trace,
 			this.deps.getPreservedUnresolvedEntries(),
 			() => this.deps.onPreservedUnresolvedChanged(),
+			(path) => isBlobSyncable(path, this.deps.getExcludePatterns(), this.deps.app.vault.configDir),
 		);
 
 		this.blobSync = blobSync;
