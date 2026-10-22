@@ -24,7 +24,7 @@ import {
 import { pruneDepsFromApp, pruneEmptyParents } from "./pruneEmptyDirs";
 import type { VaultSync } from "./vaultSync";
 import { isBlobSyncable, type BlobRef } from "../types";
-import { ORIGIN_SEED } from "./origins";
+import { ORIGIN_RESTORE, isLocalOrigin } from "./origins";
 import {
 	appendTraceParams,
 	type TraceHttpContext,
@@ -439,11 +439,23 @@ export class BlobSyncManager {
 	 * Remote tombstones → delete from disk.
 	 */
 	startObservers(): void {
+		// A ref change is worth acting on when it came from the provider
+		// (another device) or from a snapshot restore (the CRDT was moved away
+		// from what this disk holds on purpose). Everything else is this
+		// device describing its own disk: setBlobRef, renames, and the
+		// IndexedDB replay at startup, which re-adds every blob in the vault
+		// with the persistence instance as origin. Treating that replay as
+		// remote queued a download per blob and overwrote files edited while
+		// Obsidian was closed (SYNC-08).
+		const isRemote = (event: { transaction: { origin: unknown } }) =>
+			event.transaction.origin === ORIGIN_RESTORE ||
+			!isLocalOrigin(event.transaction.origin, this.vaultSync.provider);
+
 		// pathToBlob observer: remote add/update → download if missing
 		const blobObserver = (event: import("yjs").YMapEvent<BlobRef>) => {
+			if (!isRemote(event)) return;
 			event.changes.keys.forEach((change, path) => {
 				if (change.action === "add" || change.action === "update") {
-					if (event.transaction.origin === ORIGIN_SEED) return;
 					const ref = this.vaultSync.pathToBlob.get(path);
 					if (!ref) return;
 					this.log(
@@ -452,7 +464,6 @@ export class BlobSyncManager {
 					this.scheduleDownload(path, ref.hash, ref.size);
 				}
 				if (change.action === "delete") {
-					if (event.transaction.origin === ORIGIN_SEED) return;
 					const oldRef = change.oldValue as BlobRef | undefined;
 					if (oldRef?.hash) {
 						let transactionHashes =
@@ -479,9 +490,9 @@ export class BlobSyncManager {
 		const tombObserver = (
 			event: import("yjs").YMapEvent<import("../types").BlobTombstone>,
 		) => {
+			if (!isRemote(event)) return;
 			event.changes.keys.forEach((change, path) => {
 				if (change.action === "add" || change.action === "update") {
-					if (event.transaction.origin === ORIGIN_SEED) return;
 					const transactionHashes =
 						this.remoteDeleteHashesByTransaction.get(event.transaction);
 					if (transactionHashes?.has(path)) return;
@@ -957,9 +968,14 @@ export class BlobSyncManager {
 				);
 			}
 
-			// Two-phase commit: update CRDT only after successful upload
+			// Two-phase commit: update CRDT only after successful upload.
+			// Size comes from the bytes that were hashed (`fileStat` is the
+			// stat the cache entry or read was keyed by), not from `file.stat`
+			// now: a write that landed during the upload would otherwise
+			// produce a ref whose size disagrees with its hash (SYNC-08).
 			const mime = guessMime(item.path);
-			this.vaultSync.setBlobRef(item.path, hash, file.stat.size, mime);
+			const uploadedSize = data ? data.byteLength : fileStat.size;
+			this.vaultSync.setBlobRef(item.path, hash, uploadedSize, mime);
 			this._completedUploads++;
 			if (item.needsRerun) {
 				item.needsRerun = false;
@@ -1182,6 +1198,18 @@ export class BlobSyncManager {
 				}
 			}
 
+			// A pending or in-flight upload means this device decided the local
+			// file is the newer one (reconcile saw an offline edit, or a modify
+			// event fired). Overwriting it here would lose that edit and leave
+			// the upload to publish a ref for bytes no longer on disk
+			// (SYNC-08). Keep the local file; the remote bytes become a
+			// conflict artifact so nothing is lost on either side.
+			const localUploadPending =
+				existing instanceof TFile &&
+				(this.uploadQueue.has(item.path) ||
+					this.inflightUploads.has(item.path) ||
+					this.uploadDebounce.has(item.path));
+
 			const downloadTimeoutMs = transferTimeoutMs(item.sizeBytes);
 			const data = await this.blobClient.download(
 				item.hash,
@@ -1201,7 +1229,25 @@ export class BlobSyncManager {
 			this.suppress(item.path);
 
 			// Write to disk
-			if (existing instanceof TFile) {
+			if (localUploadPending) {
+				const conflictPath = await this.writeDownloadConflictArtifact(
+					normalized,
+					data,
+					"local-upload-pending",
+				);
+				this.trace?.("blob", "download-conflict-quarantined", {
+					path: item.path,
+					conflictPath,
+					hashPrefix: hashPrefix(item.hash),
+					diskHashBeforePrefix: hashPrefix(diskHashBefore),
+					reason: "local-upload-pending",
+					sizeBytes: data.byteLength,
+				});
+				this.log(
+					`download: conflict artifact "${conflictPath}" for "${item.path}" ` +
+						`(local upload pending, local file kept)`,
+				);
+			} else if (existing instanceof TFile) {
 				const diskHashAfterDownload = await this.hashExistingFile(
 					existing,
 					item.path,
@@ -1448,7 +1494,10 @@ export class BlobSyncManager {
 	private async writeDownloadConflictArtifact(
 		targetPath: string,
 		data: ArrayBuffer,
-		reason: "existing-changed-during-download" | "create-race-mismatch",
+		reason:
+			| "existing-changed-during-download"
+			| "create-race-mismatch"
+			| "local-upload-pending",
 	): Promise<string> {
 		const baseConflictPath = conflictPathFor(targetPath);
 		for (let i = 0; i < 100; i++) {
