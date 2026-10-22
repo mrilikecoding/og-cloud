@@ -25,7 +25,6 @@ export type FlushWriteOutcome =
 	| "unchanged"
 	| "no-ytext"
 	| "deferred"
-	| "blocked"
 	| "failed";
 
 export function flushSettledDisk(outcome: FlushWriteOutcome): boolean {
@@ -626,9 +625,7 @@ export class DiskMirror {
 					this.log(`flushWrite: "${path}" unchanged, skipping`);
 					return "unchanged";
 				}
-				if (this.shouldBlockFrontmatterWrite(path, currentContent, content)) {
-					return "blocked";
-				}
+				this.noteFrontmatterTransition(path, currentContent, content);
 
 				await this.suppressWrite(path, content);
 				await this.app.vault.modify(existing, content);
@@ -647,9 +644,7 @@ export class DiskMirror {
 				});
 				return "written";
 			} else {
-				if (this.shouldBlockFrontmatterWrite(path, null, content)) {
-					return "blocked";
-				}
+				this.noteFrontmatterTransition(path, null, content);
 				await this.suppressWrite(path, content);
 				await this.ensureParentFolder(normalized);
 				await this.app.vault.create(normalized, content);
@@ -686,29 +681,34 @@ export class DiskMirror {
 		}
 	}
 
-	private shouldBlockFrontmatterWrite(
+	/**
+	 * Validate the frontmatter a CRDT→disk write is about to produce, for
+	 * diagnostics only. The write always proceeds: the CRDT is what every
+	 * other device shows, and a device that refuses to write it diverges,
+	 * which is how SYNC-09 started (the refusal plus a baseline that advanced
+	 * anyway). A structural problem in the shared text is traced here and
+	 * surfaces in the editor like any other text; it is not this layer's job
+	 * to hide it.
+	 */
+	private noteFrontmatterTransition(
 		path: string,
 		previousContent: string | null,
 		nextContent: string,
-	): boolean {
-		if (!this.frontmatterGuardEnabled()) return false;
-
+	): void {
+		if (!this.frontmatterGuardEnabled()) return;
 		const validation = validateFrontmatterTransition(previousContent, nextContent);
-		this.onFrontmatterValidated?.(
-			path,
-			"crdt-to-disk",
-			"flush-write",
-			validation,
-			previousContent,
-			nextContent,
-		);
-		if (!isFrontmatterBlocked(validation)) return false;
-
+		if (validation.risk === "ok") return;
 		this.log(
-			`frontmatter write blocked for "${path}" ` +
-			`(${validation.reasons.join(", ") || validation.risk})`,
+			`frontmatter ${validation.risk === "block" ? "problem" : "warning"} in "${path}" ` +
+			`(${validation.reasons.join(", ")}); writing anyway`,
 		);
-		return true;
+		this.trace?.("disk", "frontmatter-write-flagged", {
+			path,
+			risk: validation.risk,
+			reasons: validation.reasons,
+			frontmatterLength: validation.frontmatterLength,
+			previousFrontmatterLength: validation.previousFrontmatterLength ?? null,
+		});
 	}
 
 	private async handleRemoteDelete(

@@ -13,8 +13,10 @@
 // boot then saw disk != baseline == crdt and "imported" the stale disk.
 //
 // Two rules now.
-//   1. flushWrite reports what it did: written, unchanged, blocked, deferred,
-//      no-ytext or failed.
+//   1. flushWrite reports what it did: written, unchanged, deferred, no-ytext
+//      or failed. (It no longer refuses on frontmatter grounds at all: the
+//      CRDT is the shared truth, and a device that will not write it
+//      diverges. Validation still runs and traces frontmatter-write-flagged.)
 //   2. runReconciliation advances a path's baseline only on written or
 //      unchanged. Anything else holds the previous baseline and traces
 //      reconcile-baseline-held, so the next reconcile sees the same
@@ -121,9 +123,9 @@ const newHash = await contentBaselineHash(NEW);
 
 let baselineAfterTest1: string | null = null;
 
-s.section("Test 1: a blocked flush holds the baseline at the disk text");
+s.section("Test 1: a failed flush holds the baseline at the disk text");
 {
-	const f = controllerFixture("blocked");
+	const f = controllerFixture("failed");
 	f.setBaseline(oldHash);
 	await f.controller.runReconciliation("authoritative");
 
@@ -134,18 +136,18 @@ s.section("Test 1: a blocked flush holds the baseline at the disk text");
 		`baseline still equals the disk text (got ${f.baseline()?.slice(0, 8)}, old ${oldHash.slice(0, 8)}, new ${newHash.slice(0, 8)})`,
 	);
 	s.check(
-		f.traces.some((t) => t.event === "reconcile-baseline-held" && t.data?.outcome === "blocked"),
+		f.traces.some((t) => t.event === "reconcile-baseline-held" && t.data?.outcome === "failed"),
 		"baseline hold is traced with the flush outcome",
 	);
 	baselineAfterTest1 = f.baseline();
 }
 
-s.section("Test 2: the next reconcile after a blocked flush does not import the stale disk");
+s.section("Test 2: the next reconcile after a failed flush does not import the stale disk");
 {
 	// Same device, next boot: disk still OLD, CRDT NEW, baseline as Test 1 left it.
 	// This is the 03:44Z step: with the baseline wrongly at NEW, the planner
 	// reads "crdt-at-baseline, disk changed" and replaces the CRDT with OLD.
-	const f = controllerFixture("blocked");
+	const f = controllerFixture("failed");
 	f.setBaseline(baselineAfterTest1 ?? oldHash);
 	await f.controller.runReconciliation("authoritative");
 	s.check(f.ytext.toString() === NEW, "second pass: CRDT still holds the new text, nothing imported from disk");
@@ -172,8 +174,8 @@ s.section("Test 4: an unchanged flush (disk already equals CRDT) also advances")
 	s.check(f.baseline() === newHash, "baseline advanced");
 }
 
-s.section("Test 5: deferred and failed flushes hold the baseline too");
-for (const outcome of ["deferred", "failed", "no-ytext"] as FlushWriteOutcome[]) {
+s.section("Test 5: deferred and no-ytext flushes hold the baseline too");
+for (const outcome of ["deferred", "no-ytext"] as FlushWriteOutcome[]) {
 	const f = controllerFixture(outcome);
 	f.setBaseline(oldHash);
 	await f.controller.runReconciliation("authoritative");
@@ -184,7 +186,7 @@ for (const outcome of ["deferred", "failed", "no-ytext"] as FlushWriteOutcome[])
 // DiskMirror.flushWrite reports its outcome.
 // ---------------------------------------------------------------------------
 
-function mirrorFixture(diskText: string | null, crdtText: string) {
+function mirrorFixture(diskText: string | null, crdtText: string, traces: Array<{ event: string; data?: Record<string, unknown> }> = []) {
 	const doc = new Y.Doc();
 	const ytext = doc.getText("content");
 	ytext.insert(0, crdtText);
@@ -209,16 +211,32 @@ function mirrorFixture(diskText: string | null, crdtText: string) {
 			adapter: { exists: async () => true, stat: async () => ({ mtime: 2, size: (disk ?? "").length, ctime: 1, type: "file" }) },
 		} as never,
 	});
-	const mirror = new DiskMirror(app, vaultSync, editorBindings, false);
+	const mirror = new DiskMirror(app, vaultSync, editorBindings, false, (_s, event, data) => traces.push({ event, data }));
 	return { mirror, disk: () => disk };
 }
 
-s.section("Test 6: flushWrite returns blocked when the frontmatter guard refuses, and leaves disk alone");
+s.section("Test 6: flushWrite writes a large frontmatter growth (the John J. Akin transition)");
 {
-	const f = mirrorFixture(OLD, NEW);
+	const traces: Array<{ event: string; data?: Record<string, unknown> }> = [];
+	const f = mirrorFixture(OLD, NEW, traces);
 	const outcome = await f.mirror.flushWrite(PATH);
-	s.check(outcome === "blocked", `outcome is blocked (got ${outcome})`);
-	s.check(f.disk() === OLD, "disk untouched");
+	s.check(outcome === "written", `outcome is written (got ${outcome})`);
+	s.check(f.disk() === NEW, "disk now holds the CRDT text");
+	s.check(
+		traces.some((t) => t.event === "frontmatter-write-flagged" && (t.data?.reasons as string[] | undefined)?.includes("frontmatter-growth-burst")),
+		"the growth is traced as a flag, not a refusal",
+	);
+}
+
+s.section("Test 6b: flushWrite writes even a structurally suspect CRDT state (duplicate key)");
+{
+	const traces: Array<{ event: string; data?: Record<string, unknown> }> = [];
+	const dup = "---\ntype: person\ntype: place\n---\nbody\n";
+	const f = mirrorFixture(OLD, dup, traces);
+	const outcome = await f.mirror.flushWrite(PATH);
+	s.check(outcome === "written", `duplicate-key CRDT text is still written (got ${outcome})`);
+	s.check(f.disk() === dup, "disk matches the CRDT, so this device shows what the others show");
+	s.check(traces.some((t) => t.event === "frontmatter-write-flagged" && t.data?.risk === "block"), "and the structural problem is traced");
 }
 
 s.section("Test 7: flushWrite returns written for an ordinary update and unchanged when disk already matches");

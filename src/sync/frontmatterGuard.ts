@@ -70,6 +70,13 @@ export function validateFrontmatterTransition(
 	const blockReasons = new Set<string>();
 	const warnReasons = new Set<string>();
 
+	// Growth and type flips are warnings. Both are what an ordinary edit
+	// looks like (a dozen schema keys added to a three-key note; `tags: x`
+	// turned into a list), and a block on either side keeps a real edit from
+	// reaching the other devices. Only structural corruption that no edit
+	// produces on purpose (duplicate keys, broken fences, unparseable YAML)
+	// blocks. The repeated-key burst this rule was written for shows up as
+	// duplicate keys and is caught there.
 	const nextLength = next.frontmatterText.length;
 	if (
 		previousLength != null
@@ -77,7 +84,7 @@ export function validateFrontmatterTransition(
 		&& nextLength > previousLength * 2
 		&& nextLength - previousLength > 128
 	) {
-		blockReasons.add("frontmatter-growth-burst");
+		warnReasons.add("frontmatter-growth-burst");
 	}
 
 	const parsedNext = parseFrontmatter(next.frontmatterText);
@@ -241,13 +248,13 @@ function analyzeFieldPolicies(
 		if (previousKind === nextKind) continue;
 
 		if (policy === "register") {
-			blockReasons.add(`field-type-flip:${key}:${previousKind}->${nextKind}`);
+			warnReasons.add(`field-type-flip:${key}:${previousKind}->${nextKind}`);
 			continue;
 		}
 
 		if ((policy === "ordered-list" || policy === "set-like")
 			&& (previousKind === "array" || nextKind === "array")) {
-			blockReasons.add(`field-type-flip:${key}:${previousKind}->${nextKind}`);
+			warnReasons.add(`field-type-flip:${key}:${previousKind}->${nextKind}`);
 		}
 	}
 

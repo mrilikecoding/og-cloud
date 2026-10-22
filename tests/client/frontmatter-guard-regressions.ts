@@ -147,7 +147,12 @@ s.section("Test 6: malformed frontmatter fence is blocked");
 	);
 }
 
-s.section("Test 7: frontmatter growth burst is blocked");
+// 2026-10-22 (SYNC-09 follow-up): growth and type flips are warnings, not
+// blocks. Both fire on ordinary edits (adding schema keys to a short
+// frontmatter, turning `tags: x` into a list) and a block on either side
+// stops a real edit from reaching the other devices. Only structural
+// corruption (duplicate keys, malformed fences, unparseable YAML) blocks.
+s.section("Test 7: frontmatter growth burst warns but does not block");
 {
 	const previous = [
 		"---",
@@ -163,7 +168,8 @@ s.section("Test 7: frontmatter growth burst is blocked");
 		"body",
 	].join("\n");
 	const result = validateFrontmatterTransition(previous, next);
-	s.check(isFrontmatterBlocked(result), "large frontmatter-only growth burst is blocked");
+	s.check(!isFrontmatterBlocked(result), "large frontmatter-only growth is not blocked");
+	s.check(result.risk === "warn", "growth burst is a warning");
 	s.check(result.reasons.includes("frontmatter-growth-burst"), "growth burst reason is reported");
 }
 
@@ -195,7 +201,7 @@ s.section("Test 9: parser-backed validation blocks invalid YAML");
 	s.check(result.reasons.includes("yaml-parse-error"), "parser error reason is reported");
 }
 
-s.section("Test 10: schema-lite register fields block scalar/list flips");
+s.section("Test 10: schema-lite register fields warn on scalar/list flips");
 {
 	const previous = [
 		"---",
@@ -214,7 +220,8 @@ s.section("Test 10: schema-lite register fields block scalar/list flips");
 		"body",
 	].join("\n");
 	const result = validateFrontmatterTransition(previous, next);
-	s.check(isFrontmatterBlocked(result), "known field type flips are blocked");
+	s.check(!isFrontmatterBlocked(result), "known field type flips are not blocked");
+	s.check(result.risk === "warn", "field type flips are warnings");
 	s.check(
 		result.reasons.includes("field-type-flip:tags:array->scalar"),
 		"list field type flip reason is reported",
